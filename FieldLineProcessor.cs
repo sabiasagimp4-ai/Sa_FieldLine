@@ -15,22 +15,23 @@ namespace SaFieldLine;
 ///   P0  等倍   輝度
 ///   P1  等倍   σ,2σ,4σ,8σ,16σ のガウス微分を合成して輪郭と法線を出す
 ///   P2  等倍   全画面 RMS で正規化して閾値を掛ける
-///   P3  1/4    重み ∝ σ のガウスを 6 枚重ねて ≈1/r の長距離カーネルを作る
-///   P4  1/4    引力/回転/平滑化/コヒーレンス/curl を確定させる
-///   P5  1/4    引き伸ばし用の放射場（φ の勾配の逆）
+///   P3  1/2    重み ∝ σ のガウスを 6 枚重ねて ≈1/r の長距離カーネルを作る
+///   P4  1/2    引力/回転/平滑化/コヒーレンス/curl を確定させる
+///   P5  1/2    引き伸ばし用の放射場（φ の勾配の逆）
 ///   P6  等倍   流線を積分して変位サンプリング
-///   P7  1/2    輪郭の色を 1 歩ずつ伝播させる（N 回の ping-pong）
+///   P7  等倍   輪郭の色を 1 歩ずつ伝播させる（N 回の ping-pong）
 ///   P8  等倍   発光 / 力線描画 / 元画像を残す
 ///
-/// 場が 1/4 解像度なので、Radius を上げてもコストがほとんど増えない。
+/// 場は縮小して作るので、Radius を上げてもコストがほとんど増えない。
 /// </summary>
 internal sealed class FieldLineProcessor : IVideoEffectProcessor
 {
-    /// <summary>場を作る解像度の分母。</summary>
-    const int FieldDiv = 4;
-    /// <summary>引き伸ばしを伝播させる解像度の分母。等倍だと必要なパス数が多すぎる。</summary>
-    const int StretchDiv = 2;
-    /// <summary>伝播 1 パスの移動量 [元画像 px]。2px を超えると櫛状の縞が戻る（プロトタイプで実測）。</summary>
+    /// <summary>
+    /// 場を作る解像度の分母。1/4 まで落とすと曲がりを上げた時の細部が溶けるので 1/2 にしてある。
+    /// 長距離拡散はここで効くので、影響範囲を上げてもコストはほぼ変わらない。
+    /// </summary>
+    const int FieldDiv = 2;
+    /// <summary>伝播 1 パスの移動量 [px]。2px を超えると櫛状の縞が戻る（プロトタイプで実測）。</summary>
     const float StretchStepPx = 1.5f;
     /// <summary>流線 1 ステップの移動量 [px]。3px を超えると流線がジャギる。</summary>
     const float StepPx = 1.25f;
@@ -38,6 +39,10 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     const int SpreadOctaves = 6;
     /// <summary>1x1 まで潰すのに要る段数。4K（1/4 で 960px）でも 10 段で足りる。</summary>
     const int ReduceLevels = 12;
+    /// <summary>
+    /// 伝播パスの上限。1 パスにつき等倍の RGBA16F が 1 枚要るので、
+    /// D2D が中間バッファを使い回さない場合はここがメモリの上限になる。
+    /// </summary>
     const int MaxStretchPasses = 256;
 
     const float BaseSigma = 1.1f;
@@ -86,9 +91,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     readonly Node[] phiReduce = new Node[ReduceLevels];
     readonly Node phiNorm = null!;
     readonly Node dirBorder = null!, dirBlur = null!, dirCrop = null!;
-    readonly Node advectS = null!, confS = null!;
     readonly Node prioBorder = null!, prioBlur = null!, prioCrop = null!;
-    readonly Node stretchUp = null!;
 
     readonly List<StretchStepPass> stretchSteps = [];
     readonly List<ID2D1Image> stretchStepOutputs = [];
@@ -219,12 +222,10 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         advect.SetInput(1, fieldAOut, true);
         advect.SetInput(2, fieldBOut, true);
 
-        // --- P7: 引き伸ばしの伝播（1/2）
-        advectS = NewScale(1f / StretchDiv);
-        advectS.Effect.SetInput(0, advectOut, true);
-        confS = NewScale(1f / StretchDiv);
-        confS.Effect.SetInput(0, confOut, true);
-        priority.SetInput(0, confS.Output, true);
+        // --- P7: 引き伸ばしの伝播（等倍）
+        // 1/2 で伝播させると 1 パスが 1/4 のコストで済むが、帯の境界も運ぶ色も眠くなる。
+        // 3 倍に拡大して比べると差がはっきり出たので等倍のままにしてある。
+        priority.SetInput(0, confOut, true);
         prioBorder = NewBorder();
         prioBorder.Effect.SetInput(0, prioOut, true);
         prioBlur = NewBlur();
@@ -232,13 +233,11 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         prioCrop = NewCrop();
         prioCrop.Effect.SetInput(0, prioBlur.Output, true);
 
-        stretchInit.SetInput(0, advectS.Output, true);
+        stretchInit.SetInput(0, advectOut, true);
         stretchInit.SetInput(1, radialOut, true);
         stretchInit.SetInput(2, prioCrop.Output, true);
-        stretchUp = NewScale(StretchDiv);
 
         composite.SetInput(0, advectOut, true);
-        composite.SetInput(1, stretchUp.Output, true);
 
         // --- P8
         post.SetInput(1, fieldAOut, true);
@@ -315,7 +314,6 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         // 縮小後の矩形も整数に丸める。半端な値だと Crop の縁が半透明になり、
         // そこを読んだ流線が壊れる。
         var fieldRect = Shrink(rect, FieldDiv);
-        var stretchRect = Shrink(rect, StretchDiv);
 
         // --- 全画面 RMS を取るための縮小段数。1x1 になるところで打ち切る。
         var wq = MathF.Max((right - left) / FieldDiv, 1f);
@@ -443,34 +441,32 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
             EnsureStretchSteps(passes);
 
             var stepPx = flowLength / passes;
-            var stepTexels = stepPx / StretchDiv;
-            var radialScale = (float)StretchDiv / FieldDiv;
+            var radialScale = 1f / FieldDiv;
             // score = 優先度 - tie * 距離。1 歩ぶんのペナルティは tie(=0.03/total) * stepPx。
             var tie = 0.03d / passes;
 
-            FieldLineGraph.SetBlurSigma(prioBlur.Effect, (float)(stretchWidth / StretchDiv));
-            FieldLineGraph.SetCropRect(prioCrop.Effect, stretchRect);
+            FieldLineGraph.SetBlurSigma(prioBlur.Effect, (float)stretchWidth);
+            FieldLineGraph.SetCropRect(prioCrop.Effect, rect);
 
-            var pickTexels = pick / StretchDiv;
-            stretchInit.C0 = new Vector4((float)pickTexels, radialScale, 0f, 0f);
-            stretchInit.C2 = stretchRect;
+            stretchInit.C0 = new Vector4((float)pick, radialScale, 0f, 0f);
+            stretchInit.C2 = rect;
             stretchInit.C3 = fieldRect;
-            stretchInit.C5 = new Vector4(0f, 0f, (float)Math.Ceiling(pickTexels) + 1f, 2f);
+            stretchInit.C5 = new Vector4(0f, 0f, (float)Math.Ceiling(pick) + 1f, 2f);
 
-            var stepC0 = new Vector4((float)stepTexels, radialScale, (float)tie, 0f);
-            var stepC5 = new Vector4(0f, 0f, (float)Math.Ceiling(stepTexels) + 1f, 2f);
+            var stepC0 = new Vector4((float)stepPx, radialScale, (float)tie, 0f);
+            var stepC5 = new Vector4(0f, 0f, (float)Math.Ceiling(stepPx) + 1f, 2f);
             for (var i = 0; i < passes; i++)
             {
                 var pass = stretchSteps[i];
                 pass.C0 = stepC0;
-                pass.C2 = stretchRect;
+                pass.C2 = rect;
                 pass.C3 = fieldRect;
                 pass.C5 = stepC5;
             }
 
             if (wiredStretchTail != passes)
             {
-                stretchUp.Effect.SetInput(0, stretchStepOutputs[passes - 1], true);
+                composite.SetInput(1, stretchStepOutputs[passes - 1], true);
                 wiredStretchTail = passes;
             }
         }

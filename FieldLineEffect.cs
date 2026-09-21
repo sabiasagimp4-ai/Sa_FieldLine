@@ -105,12 +105,12 @@ public sealed class FieldLineEffect : VideoEffectBase
     [AnimationSlider("F1", "%", 0, 100)]
     public Animation PreserveOriginal { get; } = new(0, 0, 100);
 
-    [Display(Name = "ステップ数", Description = "流線と引き伸ばしの最大パス数。下げると軽くなりますが、長い流線でジャギが出ます", Order = 21)]
-    [Range(8, 256)]
-    [DefaultValue(96)]
-    [TextBoxSlider("F0", "", 8, 256)]
-    public int Steps { get => steps; set => Set(ref steps, Math.Clamp(value, 8, 256)); }
-    int steps = 96;
+    [Display(Name = "ステップ数", Description = "流線と引き伸ばしの最大パス数。引き伸ばしは「流線の長さ ÷ 1.5px」だけ要ります。足りないと 1 歩が粗くなり、櫛状の縞が出ます", Order = 21)]
+    [Range(8, 512)]
+    [DefaultValue(192)]
+    [TextBoxSlider("F0", "", 8, 512)]
+    public int Steps { get => steps; set => Set(ref steps, Math.Clamp(value, 8, 512)); }
+    int steps = 192;
 
     public override IEnumerable<string> CreateExoVideoFilters(int keyFrameIndex, ExoOutputDescription exoOutputDescription) => [];
 

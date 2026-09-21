@@ -24,8 +24,8 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 EPS = 1e-8
 
 # --- 実装定数（HLSL 側と一致させる） -------------------------------------
-FIELD_DIV = 4          # 場を作る解像度（1/4）
-STRETCH_DIV = 2        # 引き伸ばしの伝播解像度（1/2）
+FIELD_DIV = 2          # 場を作る解像度（1/2）。1/4 だと曲がりを上げた時の細部が溶ける
+STRETCH_DIV = 1        # 引き伸ばしの伝播解像度（等倍）。1/2 にすると目に見えて眠くなる
 STRETCH_STEP_PX = 1.5  # 伝播 1 パスの移動量 [元画像 px]
 EDGE_OCTAVES = 5
 SPREAD_OCTAVES = 6
@@ -156,9 +156,11 @@ class GpuParams:
     line_grain: float = 1.4
     line_density: float = 1.0
 
-    steps: int = 96              # 流線積分の最大ステップ数
+    field_div: int = FIELD_DIV   # 場を作る解像度の分母
+    stretch_div: int = STRETCH_DIV  # 引き伸ばしの伝播解像度の分母
+    steps: int = 192             # 流線積分の最大ステップ数
     step_px: float = 1.25
-    stretch_steps: int = 96      # 伝播の最大パス数
+    stretch_steps: int = 192     # 伝播の最大パス数
     base_sigma: float = 1.1
     align: float = 0.65
     amp_gamma: float = 0.85
@@ -169,7 +171,7 @@ class GpuParams:
 def build_field(rgb, p: GpuParams):
     """P0-P3 に相当。戻り値は 1/FIELD_DIV 解像度のテクスチャ群。"""
     h, w = rgb.shape[:2]
-    Q = FIELD_DIV
+    Q = p.field_div
 
     # --- P0: 輝度（プリマルチプライ済みの色をそのまま使う）
     lum = (0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]).astype(np.float32)
@@ -310,7 +312,7 @@ def _step_count(length, step_px, cap):
 # ==========================================================  P4 : 流線変位
 def advect(rgb, F, p: GpuParams):
     h, w = rgb.shape[:2]
-    Q = FIELD_DIV
+    Q = p.field_div
     A = F["A"]; B = F["B"]
     yy, xx = _grid((h, w))
 
@@ -372,8 +374,8 @@ def advect(rgb, F, p: GpuParams):
 def stretch(colour, F, p: GpuParams):
     """1/STRETCH_DIV 解像度で ping-pong 伝播させ、等倍へ戻す。"""
     h, w = colour.shape[:2]
-    S = STRETCH_DIV
-    Q = FIELD_DIV
+    S = p.stretch_div
+    Q = p.field_div
     col0 = d2d_down(colour, S)
     conf_s = d2d_down(F["conf"], S)
     lh, lw = col0.shape[:2]
@@ -455,7 +457,7 @@ def _value_noise(x, y):
 
 
 def _line_noise(px, py, phi, grain, seed_edge):
-    cell = max(2.0 * grain, 0.6)
+    cell = max(grain, 0.6)
     z = (_value_noise(px / cell, py / cell) - 0.5) / 0.19   # 値ノイズの標準偏差 ~0.19
     seed = np.clip(phi, 0.0, 1.0) ** 0.7
     z = z * ((1.0 - seed_edge) + seed_edge * (0.25 + 0.75 * seed))
@@ -471,7 +473,7 @@ def _highlight(col, py, px):
 def _walk(col, F, p: GpuParams, sgn, n, hstep, mode):
     """流線に沿って payload を平均する。mode 0 = 発光、1 = 力線(LIC)。"""
     h, w = col.shape[:2]
-    Q = FIELD_DIV
+    Q = p.field_div
     A = F["A"]
     phiN = d2d_up(F["B"][..., 1], (h, w))
     yy, xx = _grid((h, w))
@@ -539,7 +541,7 @@ def post(col, F, p: GpuParams, original):
         hstep = total / n
         lic = 0.5 * (_walk(out, F, p, -1.0, n, hstep, 1) + _walk(out, F, p, 1.0, n, hstep, 1))
         # 局所コントラスト正規化の代わりに、LIC の標準偏差を解析的に出して割る
-        g_eff = max(2.0 * p.line_grain, 0.6)
+        g_eff = max(p.line_grain, 0.6)
         sd = 0.5 * np.sqrt(g_eff / max(total, g_eff)) + 0.030
         tex = np.clip((lic - 0.5) / sd * 0.30 * p.line_density + 0.5, 0.0, 1.0)
         t = ((tex - 0.5) * (p.line_draw * amp) * 1.7)[..., None]

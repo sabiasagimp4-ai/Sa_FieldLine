@@ -7,7 +7,7 @@
 #include <d2d1effecthelpers.hlsli>
 #include "FieldLineCommon.hlsli"
 
-#define HSTEP        c0.x   // [1/2 texel]
+#define HSTEP        c0.x   // 1 歩の移動量 [px]
 #define RADIAL_SCALE c0.y
 #define TIE          c0.z   // 1 歩ぶんの距離ペナルティ。同点なら近い輪郭を採る
 #define RECT         c2

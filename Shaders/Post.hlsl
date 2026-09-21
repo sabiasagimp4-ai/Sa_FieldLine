@@ -1,5 +1,5 @@
 // P8: 発展要素（発光 / 力線描画 / 元画像を残す）と最終クランプ。
-// 入力 0 = ここまでの色 / 1 = FieldA（1/4） / 2 = FieldB（1/4） / 3 = 元画像
+// 入力 0 = ここまでの色 / 1 = FieldA（縮小） / 2 = FieldB（縮小） / 3 = 元画像
 //
 // D2D のサンプリングヘルパはエントリポイントのローカル（走査座標）に展開されうるので、
 // 自前の関数の中からは呼ばない。流線をたどる部分はマクロで展開する。
@@ -47,7 +47,7 @@ float saValueNoise(float2 x)
 // ノイズを輪郭の近くへ寄せて撒くと、砂鉄のように「輪郭から生えて遠くで疎になる」線になる。
 float saLineNoise(float2 q, float phiN, float grain, float seedEdge)
 {
-    float cell = max(2.0 * grain, 0.6);
+    float cell = max(grain, 0.6);
     float z = (saValueNoise(q / cell) - 0.5) / 0.19;   // 値ノイズの標準偏差 ~0.19
     float seed = pow(saturate(phiN), 0.7);
     z *= (1.0 - seedEdge) + seedEdge * (0.25 + 0.75 * seed);
@@ -120,7 +120,7 @@ D2D_PS_ENTRY(main)
 
         // 局所コントラスト正規化の代わりに、LIC の標準偏差を解析的に求めて割る。
         // 平均される有効本数 ~ 経路長 / ノイズの粒。
-        float gEff = max(2.0 * LINE_GRAIN, 0.6);
+        float gEff = max(LINE_GRAIN, 0.6);
         float sd = 0.5 * sqrt(gEff / max(LINE_LENGTH, gEff)) + 0.030;
         float tex = saturate((lic - 0.5) / sd * 0.30 * LINE_DENSITY + 0.5);
         float t = (tex - 0.5) * (LINE_DRAW * amp) * 1.7;

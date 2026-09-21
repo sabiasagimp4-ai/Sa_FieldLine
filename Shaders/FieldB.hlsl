@@ -6,7 +6,7 @@
 #include "FieldLineCommon.hlsli"
 
 #define TURB_STEP c0.x   // 方向場の回り方を測る間隔 [texel]
-#define TURB_GAIN c0.y   // ts / FIELD_DIV
+#define TURB_GAIN c0.y   // ts / 場の分母
 #define FALLOFF   c0.z
 #define AMP_GAMMA c0.w
 #define RECT      c2

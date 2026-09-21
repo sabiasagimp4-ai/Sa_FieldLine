@@ -1,5 +1,5 @@
 // P6: 流線を積分して変位サンプリングする。1 ステップにつき FieldA を 1 回読むだけ。
-// 入力 0 = 元画像（等倍） / 1 = FieldA（1/4） / 2 = FieldB（1/4）
+// 入力 0 = 元画像（等倍） / 1 = FieldA（縮小） / 2 = FieldB（縮小）
 #define D2D_ENTRY main
 #include <d2d1effecthelpers.hlsli>
 #include "FieldLineCommon.hlsli"

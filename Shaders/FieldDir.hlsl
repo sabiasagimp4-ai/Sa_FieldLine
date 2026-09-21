@@ -7,7 +7,7 @@
 #define ATTRACT   c0.x
 #define SWIRL     c0.y
 #define GRAD_STEP c0.z     // phi の勾配を取る間隔 [texel]
-#define GRAD_GAIN c0.w     // gs（= max(radius*0.16, 2.5) / FIELD_DIV）
+#define GRAD_GAIN c0.w     // gs（= max(radius*0.16, 2.5) / 場の分母）
 #define RECT      c2
 
 D2D_PS_ENTRY(main)

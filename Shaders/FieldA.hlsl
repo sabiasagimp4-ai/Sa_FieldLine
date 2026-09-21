@@ -6,7 +6,7 @@
 #include "FieldLineCommon.hlsli"
 
 #define CURL_STEP c0.x   // curl を取る間隔 [texel]
-#define CURL_GAIN c0.y   // cs = max(1.5, radius*0.05) / FIELD_DIV
+#define CURL_GAIN c0.y   // cs = max(1.5, radius*0.05) / 場の分母
 #define RECT      c2
 
 D2D_PS_ENTRY(main)
