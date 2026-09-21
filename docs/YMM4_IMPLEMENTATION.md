@@ -255,6 +255,11 @@ C# は `TreatWarningsAsErrors` 込みで Debug / Release とも警告 0 で通�
 `D2DGetScenePosition` と `D2DSampleInputAtPosition` を使う形）も、
 リリース済みの `Sa_chromablur` が同じ形で fxc を通っている。
 
+`FieldLineProcessor.Update` が作る定数（オクターブ重み、σ の連鎖、拡散の重み、
+attract / curl / turb / radial の σ、ステップ数、`tie`、`gate` の補正、色を拾う距離）は
+`prototype/gpu_sim.py` と一つずつ突き合わせて一致を確かめた。ただし**目視**であって、
+自動では見ていない。片方だけ直すと黙ってずれる。
+
 ## 未確認の点
 
 1. **YMM4 スタブが本物と食い違っていないか。** 署名は
