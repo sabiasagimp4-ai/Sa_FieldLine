@@ -224,7 +224,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
 
         // --- P7: 引き伸ばしの伝播（等倍）
         // 1/2 で伝播させると 1 パスが 1/4 のコストで済むが、帯の境界も運ぶ色も眠くなる。
-        // 3 倍に拡大して比べると差がはっきり出たので等倍のままにしてある。
+        // 3 倍に拡大して比べると差がはっきり出たので等倍にしてある。
         priority.SetInput(0, confOut, true);
         prioBorder = NewBorder();
         prioBorder.Effect.SetInput(0, prioOut, true);
@@ -451,10 +451,13 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
             stretchInit.C0 = new Vector4((float)pick, radialScale, 0f, 0f);
             stretchInit.C2 = rect;
             stretchInit.C3 = fieldRect;
-            stretchInit.C5 = new Vector4(0f, 0f, (float)Math.Ceiling(pick) + 1f, 2f);
+            // 伝播は 100 パス近く連なるので、入力は「一部を広げて」ではなく「全体」を要求する。
+            // 広げる形だと、D2D がタイルに分けて描いた時に上流の連鎖が
+            // タイルごとに描き直され、深さぶんだけ無駄が積み上がる。
+            stretchInit.C5 = new Vector4(0f, 0f, 0f, 3f);
 
             var stepC0 = new Vector4((float)stepPx, radialScale, (float)tie, 0f);
-            var stepC5 = new Vector4(0f, 0f, (float)Math.Ceiling(stepPx) + 1f, 2f);
+            var stepC5 = new Vector4(0f, 0f, 0f, 3f);
             for (var i = 0; i < passes; i++)
             {
                 var pass = stretchSteps[i];
