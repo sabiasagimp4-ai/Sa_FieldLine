@@ -62,7 +62,17 @@ class Params:
     preserve_original: float = 0.0 # 元画像を残す量
 
     # --- 発展 ---
-    smear: float = 0.0             # 流線に沿って色を引き伸ばす（方向ボケ）
+    smear: float = 0.0             # 流線に沿って色を平均する（方向ボケ）
+    stretch: float = 0.0           # 流線に沿って色を「帯のまま」引き伸ばす
+    stretch_mode: str = "edge"     # edge / contrast / bright / dark / vivid / far
+    stretch_decay: float = 1.2     # 遠いサンプルの不利さ（大きいほど短い）
+    stretch_scale: float = 0.0     # 優先度マップのぼかし [px]。**ストロークの太さ**
+    stretch_drag: float = 0.35     # 遠いサンプルほど有利にする量。
+                                   # 平坦な面は最遠点＝丸ごとドラッグされ、
+                                   # 輪郭のある所は輪郭の色が居座って帯になる
+    stretch_jitter: float = 0.0    # 流線ごとに長さをばらつかせる（筆の毛）
+    stretch_jitter_scale: float = 6.0  # ばらつきの粒 [px]
+    posterize: int = 0             # 0で無効。色を階調に丸めてフラットにする
     streamer: float = 0.0          # エッジの色を流線に沿って引き出す（力線そのもの）
     streamer_decay: float = 2.2    # 引き出した色の減衰（大きいほど短い）
     streamer_split: float = 0.75   # 種をまばらに撒いて線を分離させる度合い（砂鉄）
@@ -364,6 +374,97 @@ def edge_streamer(fieldset, lin: np.ndarray, p: Params, sign: float = -1.0,
     return col.astype(np.float32), cover.astype(np.float32)
 
 
+# ------------------------------------------- 5c. flow hold (引き伸ばし本体)
+def _priority_map(lin: np.ndarray, fieldset, mode: str) -> np.ndarray:
+    """流線上で「どのサンプルを採用するか」を決める優先度。"""
+    l = luma(lin)
+    if mode == "edge":
+        return fieldset["conf"] ** 1.2
+    if mode == "contrast":
+        # 局所平均からの外れ具合。明部も暗部も等しく伸びる
+        d = np.abs(l - gaussian_filter(l, 6.0, mode="reflect"))
+        return (d / robust_scale(d, 97.0)).astype(np.float32)
+    if mode == "bright":
+        return l
+    if mode == "dark":
+        return 1.0 - l
+    if mode == "vivid":
+        mx = lin.max(-1)
+        mn = lin.min(-1)
+        return ((mx - mn) / (mx + EPS)).astype(np.float32)
+    return np.zeros_like(l)  # far: 優先度なし → 常に上書き = 最遠点を保持
+
+
+def flow_hold(fieldset, lin: np.ndarray, p: Params, sign: float = -1.0,
+              length_scale: float = 1.0):
+    """流線をさかのぼり、最も優先度の高いサンプルの色を **1つだけ** 選んで塗る。
+
+    平均しないので色が帯のまま伸び、優先度の順位が入れ替わる所で縁が立つ。
+    これが参考画像のような「引き伸ばし」になる。平均（smear）はボケにしかならない。
+    """
+    h, w = lin.shape[:2]
+    yy, xx = np.meshgrid(np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij")
+    px, py = xx.copy(), yy.copy()
+
+    dx0, dy0 = fieldset["dx"], fieldset["dy"]
+    d_x = (sign * dx0).copy()
+    d_y = (sign * dy0).copy()
+
+    prio = _priority_map(lin, fieldset, p.stretch_mode)
+    # 優先度が高周波だと argmax が細かく切り替わって「引っ掻き傷」になる。
+    # ぼかすと切り替わりが疎になり、ストロークが太くなる。
+    if p.stretch_scale > 0.3:
+        prio = gaussian_filter(prio, p.stretch_scale, mode="reflect")
+    always = p.stretch_mode == "far"
+
+    total = p.flow_length * length_scale
+    n = _step_count(p, total)
+    hstep = total / n
+
+    jit = 1.0
+    if p.stretch_jitter > 1e-4:
+        rng = np.random.default_rng(p.seed + 991)
+        nz = gaussian_filter(rng.random((h, w)).astype(np.float32),
+                             max(p.stretch_jitter_scale, 0.4), mode="reflect")
+        nz = (nz - nz.min()) / (np.ptp(nz) + EPS)
+        jit = (1.0 - p.stretch_jitter + p.stretch_jitter * nz * 2.0)
+
+    best_c = lin.copy()
+    best_q = (prio * 1.0).astype(np.float32) if not always else np.full((h, w), -1e9, np.float32)
+
+    for i in range(n):
+        fx = sign * _sample(dx0, py, px)
+        fy = sign * _sample(dy0, py, px)
+        gate = _sample(fieldset["flow"], py, px)
+        cu = _sample(fieldset["curl"], py, px)
+
+        flip = np.where(fx * d_x + fy * d_y < 0.0, -1.0, 1.0).astype(np.float32)
+        fx *= flip
+        fy *= flip
+        ang = np.arctan2(d_x * fy - d_y * fx, d_x * fx + d_y * fy)
+        turn = p.align * ang + p.curvature * cu * hstep * 0.09
+        ct, st = np.cos(turn), np.sin(turn)
+        d_x, d_y = ct * d_x - st * d_y, st * d_x + ct * d_y
+        dn = np.hypot(d_x, d_y) + EPS
+        d_x /= dn
+        d_y /= dn
+
+        px = px + d_x * hstep * gate * jit
+        py = py + d_y * hstep * gate * jit
+
+        t = (i + 1) / n
+        w_i = float(np.exp(-p.stretch_decay * t))
+        q = (float(i) if always
+             else _sample(prio, py, px) * w_i + p.stretch_drag * t)
+        c = _sample(lin, py, px)
+
+        better = q > best_q
+        best_q = np.where(better, q, best_q).astype(np.float32)
+        best_c = np.where(better[..., None], c, best_c)
+
+    return best_c.astype(np.float32)
+
+
 # ------------------------------------------------------------------- render
 def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
     h, w = rgb_srgb.shape[:2]
@@ -388,6 +489,15 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
     else:
         sy, sx = advect(1.0)
         out = _sample(lin, sy, sx)
+
+    # --- 発展: 流線に沿って色を帯のまま引き伸ばす ---
+    if p.stretch > 1e-4:
+        st = flow_hold(fieldset, out, p, sign=-1.0)
+        if p.bidirectional:
+            st2 = flow_hold(fieldset, out, p, sign=1.0)
+            st = np.where(luma(st)[..., None] >= luma(st2)[..., None], st, st2)
+        k = np.clip(p.stretch * (0.25 + 0.75 * amp), 0.0, 1.0)[..., None]
+        out = out * (1.0 - k) + st * k
 
     # --- 発展: エッジの色を流線に沿って引き出す（力線本体） ---
     if p.streamer > 1e-4:
@@ -432,6 +542,9 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
         out = out * (1.0 + p.shade * 1.2 * sh[..., None])
 
     out = linear_to_srgb(np.clip(out, 0.0, 1.0))
+    if p.posterize and p.posterize >= 2:
+        lv = float(p.posterize) - 1.0
+        out = np.round(out * lv) / lv
     if p.preserve_original > 1e-4:
         k = p.preserve_original
         out = out * (1.0 - k) + rgb_srgb * k

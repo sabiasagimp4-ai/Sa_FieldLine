@@ -71,6 +71,25 @@ PRESETS: list[tuple[str, str, dict]] = [
         smoothness=0.40, edge_threshold=0.08, detail_scale=0.0,
         line_draw=0.35, line_grain=1.8)),
 
+    ("15_stretch_soft", "引き伸ばし（控えめ）", dict(
+        strength=0.0, radius=120, flow_length=90, curvature=1.0, swirl=1.0,
+        smoothness=0.30, edge_threshold=0.08, detail_scale=0.55, falloff=0.0, step_px=1.5,
+        stretch=0.7, stretch_mode="contrast", stretch_scale=12, stretch_drag=0.3,
+        stretch_decay=3.0, stretch_jitter=0.6, stretch_jitter_scale=9)),
+
+    ("16_stretch", "引き伸ばし（標準・帯のまま伸びる）", dict(
+        strength=0.0, radius=120, flow_length=150, curvature=1.0, swirl=1.0,
+        smoothness=0.30, edge_threshold=0.08, detail_scale=0.55, falloff=0.0, step_px=1.5,
+        stretch=1.0, stretch_mode="contrast", stretch_scale=16, stretch_drag=0.3,
+        stretch_decay=3.0, stretch_jitter=0.6, stretch_jitter_scale=9)),
+
+    ("17_stretch_mosh", "引き伸ばし＋グリッチ（粗い歩幅・色収差・階調丸め）", dict(
+        strength=0.0, radius=120, flow_length=150, curvature=1.0, swirl=1.0,
+        smoothness=0.30, edge_threshold=0.08, detail_scale=0.55, falloff=0.0, step_px=7.0,
+        stretch=1.0, stretch_mode="contrast", stretch_scale=16, stretch_drag=0.3,
+        stretch_decay=2.0, stretch_jitter=0.5, stretch_jitter_scale=9,
+        chroma=0.9, posterize=14)),
+
     ("14_preserve", "Preserve Original 0.5（強い設定を半分残す）", dict(
         strength=1.0, radius=160, flow_length=170, curvature=2.0, swirl=0.35,
         smoothness=0.35, edge_threshold=0.10, detail_scale=0.5,
