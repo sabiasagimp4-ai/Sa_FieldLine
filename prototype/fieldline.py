@@ -65,7 +65,8 @@ class Params:
     smear: float = 0.0             # 流線に沿って色を平均する（方向ボケ）
     stretch: float = 0.0           # 流線に沿って色を「帯のまま」引き伸ばす
     stretch_mode: str = "edge"     # edge / contrast / bright / dark / vivid / far
-    stretch_decay: float = 1.2     # 遠いサンプルの不利さ（大きいほど短い）
+    stretch_decay: float = 0.0     # >0 にすると近い輪郭ほど優先される。
+                                   # 0 なら流線上で最も強い輪郭の色が届く
     stretch_scale: float = 0.0     # 優先度マップのぼかし [px]。**ストロークの太さ**
     stretch_drag: float = 0.0      # 遠いサンプルほど有利にする量。
                                    # >0 にすると平坦な面まで丸ごとドラッグされる
@@ -73,7 +74,8 @@ class Params:
                                    # 端の色だけを引き出したいときは 0 のまま。
     stretch_pick: float = 3.0      # 色を拾う位置を、輪郭からさらに上流へ [px]
                                    # ずらす。線画の黒ではなく面の色を引き出す。
-    stretch_gate: float = 0.12     # これ未満しか輪郭を掴めなかった画素は元のまま
+    stretch_gate: float = 0.35     # これ未満しか輪郭を掴めなかった画素は元のまま。
+                                   # 掴めた画素は **完全不透明** で塗り替わる
     stretch_jitter: float = 0.0    # 流線ごとに長さをばらつかせる（筆の毛）
     stretch_jitter_scale: float = 6.0  # ばらつきの粒 [px]
     posterize: int = 0             # 0で無効。色を階調に丸めてフラットにする
@@ -503,10 +505,14 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
             take = (q2 > q)[..., None]
             st = np.where(take, st2, st)
             q = np.maximum(q, q2)
-        # 輪郭を掴めなかった画素は元のまま残す
-        grab = smoothstep(p.stretch_gate, p.stretch_gate + 0.18, q).astype(np.float32)
-        k = np.clip(p.stretch * grab * (0.30 + 0.70 * amp), 0.0, 1.0)[..., None]
-        out = out * (1.0 - k) + st * k
+        # 輪郭を掴めた画素は **完全不透明** で上書きする（下の色は残さない）。
+        # 掴めなかった画素だけ元のまま。減衰も距離ブレンドも掛けない。
+        covered = (q >= p.stretch_gate)
+        if p.stretch >= 0.999:
+            out = np.where(covered[..., None], st, out)
+        else:
+            k = (covered.astype(np.float32) * p.stretch)[..., None]
+            out = out * (1.0 - k) + st * k
 
     # --- 発展: エッジの色を流線に沿って引き出す（力線本体） ---
     if p.streamer > 1e-4:
