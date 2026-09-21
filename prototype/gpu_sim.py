@@ -1,0 +1,427 @@
+"""gpu_sim.py — Direct2D 実装と 1:1 対応するパイプラインのシミュレーション。
+
+fieldline.py は研究用のリファレンス実装で、全画素の percentile など
+GPU では使えない演算を含む。こちらは Direct2D で書ける演算だけを使う:
+
+  - ガウスぼかし          -> Border(Clamp) + GaussianBlur + Crop
+  - 1/2 ずつの箱平均縮小   -> Scale(0.5) の連鎖（線形補間の 2x2 平均）
+  - バイリニア拡大        -> Scale
+  - 画素ごとの四則とバイリニアサンプリング -> ピクセルシェーダ
+
+グローバルな percentile が使えないので、正規化はすべて
+「大きな σ の局所 RMS」に置き換える。カバレッジ（1 を同じ σ でぼかしたもの）で
+割るので、画面端でも値が落ちない。
+
+HLSL はこのファイルの式をそのまま移植する。数値を変えるときは
+まずここを直して見た目を確認すること。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import numpy as np
+from scipy.ndimage import gaussian_filter, map_coordinates
+
+EPS = 1e-8
+
+# --- 実装定数（HLSL 側と一致させる） -------------------------------------
+FIELD_DIV = 4          # 場を作る解像度（1/4）
+STRETCH_DIV = 2        # 引き伸ばしの伝播解像度（1/2）
+STRETCH_STEP_PX = 1.5  # 伝播 1 パスの移動量 [元画像 px]
+EDGE_OCTAVES = 5
+SPREAD_OCTAVES = 6
+
+# 局所 RMS -> リファレンスの percentile へ合わせる係数（calibrate.py で実測）
+K_MAG = 3.50           # p99(mag)  / rms(mag)
+K_PHI = 1.95           # p98(phi)  / rms(phi)
+K_COH = 0.95           # p99(|v|)。v は phi 正規化済みなので定数でよい
+K_CURL = 0.014         # p97(curl)
+K_TURB = 0.08          # p88(turb) より大きめ。smoothness を上げた時だけ緩む
+K_GRAD = 0.30          # p99(|grad phi| * gs / phi_scale)
+
+# 較正用に build_field が途中経過を残す（calibrate_gpu.py が読む）
+LAST: dict = {}
+
+
+def _clampsamp(img, y, x):
+    coords = np.stack([y.ravel(), x.ravel()])
+    if img.ndim == 2:
+        return map_coordinates(img, coords, order=1, mode="nearest").reshape(y.shape).astype(np.float32)
+    out = [map_coordinates(img[..., c], coords, order=1, mode="nearest").reshape(y.shape)
+           for c in range(img.shape[2])]
+    return np.stack(out, -1).astype(np.float32)
+
+
+def d2d_blur(a, sigma):
+    """Border(Clamp) -> GaussianBlur -> Crop に相当。"""
+    if sigma < 0.05:
+        return a.astype(np.float32)
+    if a.ndim == 3:
+        return np.stack([gaussian_filter(a[..., c], sigma, mode="nearest") for c in range(a.shape[2])],
+                        -1).astype(np.float32)
+    return gaussian_filter(a, sigma, mode="nearest").astype(np.float32)
+
+
+def d2d_half(a):
+    """Scale(0.5, Linear) = 2x2 の箱平均。奇数の端は切り捨てる。"""
+    h, w = a.shape[:2]
+    fy = 2 if h >= 2 else 1
+    fx = 2 if w >= 2 else 1
+    hh, ww = h // fy, w // fx
+    b = a[:hh * fy, :ww * fx]
+    shape = (hh, fy, ww, fx) + a.shape[2:]
+    return b.reshape(shape).mean((1, 3)).astype(np.float32)
+
+
+def d2d_down(a, div):
+    while div > 1:
+        a = d2d_half(a)
+        div //= 2
+    return a
+
+
+def d2d_up(a, shape):
+    """Scale(Linear) による拡大。"""
+    h, w = shape
+    sh, sw = a.shape[:2]
+    yy, xx = np.meshgrid(np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij")
+    sy = (yy + 0.5) * sh / h - 0.5
+    sx = (xx + 0.5) * sw / w - 0.5
+    return _clampsamp(a, sy, sx)
+
+
+def _grid(shape):
+    h, w = shape
+    return np.meshgrid(np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij")
+
+
+def smoothstep(a, b, x):
+    t = np.clip((x - a) / max(b - a, EPS), 0.0, 1.0)
+    return (t * t * (3.0 - 2.0 * t)).astype(np.float32)
+
+
+def _dx(a, r):
+    """中心差分（r texel 間隔）。GPU では 2 サンプル。"""
+    yy, xx = _grid(a.shape[:2])
+    return (_clampsamp(a, yy, xx + r) - _clampsamp(a, yy, xx - r)) / (2.0 * r)
+
+
+def _dy(a, r):
+    yy, xx = _grid(a.shape[:2])
+    return (_clampsamp(a, yy + r, xx) - _clampsamp(a, yy - r, xx)) / (2.0 * r)
+
+
+def d2d_reduce(a):
+    """Scale(0.5) を 1x1 になるまで重ねる = 全画素平均。
+
+    局所ぼかしで正規化してはいけない。平坦な領域では分母が小さくなり、
+    そこだけ効果が最大になってしまう（＝画面全体がぐにゃぐにゃになる）。
+    正規化はリファレンスと同じく画面全体の統計で行う。
+    """
+    while a.shape[0] > 1 or a.shape[1] > 1:
+        a = d2d_half(a)
+    return a
+
+
+def _global_rms(x):
+    """(x^2, 1) を 1x1 まで縮小してから拡大した定数テクスチャ、の RMS。"""
+    st = np.stack([x * x, np.ones_like(x)], -1)
+    r = d2d_reduce(st).reshape(2)
+    return float(np.sqrt(max(r[0] / max(r[1], 1e-4), 0.0)))
+
+
+@dataclass
+class GpuParams:
+    strength: float = 1.0
+    radius: float = 150.0
+    curvature: float = 1.0
+    swirl: float = 0.0
+    attract: float = 0.0
+    flow_length: float = 140.0
+    edge_threshold: float = 0.25
+    smoothness: float = 0.40
+    detail_scale: float = 0.30
+    preserve_original: float = 0.0
+
+    stretch: float = 0.0
+    stretch_gate: float = 0.35
+    stretch_pick: float = 3.0
+    stretch_scale: float = 0.0
+    stretch_swirl: float = 0.0
+
+    glow: float = 0.0
+    shade: float = 0.0
+    chroma: float = 0.0
+    line_draw: float = 0.0
+    line_grain: float = 1.4
+    line_density: float = 1.0
+
+    steps: int = 96              # 流線積分の最大ステップ数
+    step_px: float = 1.25
+    stretch_steps: int = 96      # 伝播の最大パス数
+    base_sigma: float = 1.1
+    align: float = 0.65
+    amp_gamma: float = 0.85
+    falloff: float = 0.9
+
+
+# ==========================================================  P0..P3 : 場
+def build_field(rgb, p: GpuParams):
+    """P0-P3 に相当。戻り値は 1/FIELD_DIV 解像度のテクスチャ群。"""
+    h, w = rgb.shape[:2]
+    Q = FIELD_DIV
+
+    # --- P0: 輝度（プリマルチプライ済みの色をそのまま使う）
+    lum = (0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]).astype(np.float32)
+
+    # --- P1: 多重スケールのガウス微分
+    k = np.arange(EDGE_OCTAVES, dtype=np.float32)
+    mu = (1.0 - float(np.clip(p.detail_scale, 0.0, 1.0))) * (EDGE_OCTAVES - 1)
+    wk = np.exp(-((k - mu) ** 2) / (2.0 * 0.95 ** 2))
+    wk /= wk.sum()
+
+    gx = np.zeros_like(lum); gy = np.zeros_like(lum); mag = np.zeros_like(lum)
+    cur = lum
+    prev_s = 0.0
+    for i in range(EDGE_OCTAVES):
+        s = p.base_sigma * (2.0 ** i)
+        add = np.sqrt(max(s * s - prev_s * prev_s, 0.0))
+        cur = d2d_blur(cur, add)
+        prev_s = s
+        ex = _dx(cur, 1.0) * s        # Lindeberg γ 正規化
+        ey = _dy(cur, 1.0) * s
+        gx += wk[i] * ex
+        gy += wk[i] * ey
+        mag += wk[i] * np.hypot(ex, ey)
+
+    # --- 正規化（1/Q に落としてから大 σ の局所 RMS）
+    mag_q = d2d_down(mag, Q)
+    mag_scale = max(K_MAG * _global_rms(mag_q), 1e-3)
+
+    # --- P2: conf と法線
+    mag_n = mag / mag_scale
+    knee = 0.06 + 0.35 * (1.0 - p.edge_threshold)
+    conf = smoothstep(p.edge_threshold, p.edge_threshold + knee, mag_n)
+    gv = np.hypot(gx, gy) + EPS
+    nx = gx / gv
+    ny = gy / gv
+    confn = np.stack([conf * nx, conf * ny, conf], -1).astype(np.float32)
+
+    # --- P3: 長距離拡散（1/Q）
+    cq = d2d_down(confn, Q)
+    rq = max(p.radius / Q, 0.35)
+    acc = np.zeros_like(cq); wsum = 0.0
+    cur = cq; prev_s = 0.0
+    for j in range(SPREAD_OCTAVES - 1, -1, -1):        # 小さい σ から順に重ねる
+        s = max(rq * (0.5 ** j), 0.35)
+        add = np.sqrt(max(s * s - prev_s * prev_s, 0.0))
+        cur = d2d_blur(cur, add)
+        prev_s = s
+        wj = rq * (0.5 ** j)
+        acc += wj * cur
+        wsum += wj
+    spread = acc / max(wsum, EPS)
+    Vx, Vy, phi = spread[..., 0], spread[..., 1], spread[..., 2]
+
+    phi_scale = max(K_PHI * _global_rms(phi), 1e-4)
+    phi_n = np.clip(phi / phi_scale, 0.0, 1.0).astype(np.float32)
+    vx = Vx / phi_scale
+    vy = Vy / phi_scale
+
+    # --- 引力 / 反発: φ の勾配
+    if abs(p.attract) > 1e-4:
+        gs = max(p.radius * 0.16, 2.5) / Q
+        r = max(gs, 1.0)
+        px_ = _dx(phi, r) * gs / phi_scale / K_GRAD
+        py_ = _dy(phi, r) * gs / phi_scale / K_GRAD
+        vx = vx + p.attract * px_
+        vy = vy + p.attract * py_
+
+    # --- swirl
+    if abs(p.swirl) > 1e-4:
+        th = p.swirl * (np.pi / 2.0)
+        c, s = np.cos(th), np.sin(th)
+        vx, vy = c * vx - s * vy, s * vx + c * vy
+
+    # HLSL 側は符号つきの値を [0,1] に折り込んで持つ（8bit バッファ対策）。
+    # アフィン変換なので数値は変わらないが、折り込み範囲 ±2 のクリップだけは効く。
+    vx = np.clip(vx, -2.0, 2.0)
+    vy = np.clip(vy, -2.0, 2.0)
+
+    # --- 場の平滑化
+    sig = (0.6 + p.smoothness * (2.0 + 0.085 * p.radius)) / Q
+    vx = d2d_blur(vx, sig); vy = d2d_blur(vy, sig)
+
+    amp_raw = np.hypot(vx, vy)
+    coh = np.clip(amp_raw / K_COH, 0.0, 1.0)
+    env = phi_n ** (0.35 + 1.3 * p.falloff)
+    flow = (0.30 + 0.70 * np.sqrt(coh)).astype(np.float32)
+    amp = (((0.10 + 0.90 * env) * (0.35 + 0.65 * coh)) ** p.amp_gamma).astype(np.float32)
+
+    inv = 1.0 / (amp_raw + EPS)
+    dx = (vx * inv).astype(np.float32)
+    dy = (vy * inv).astype(np.float32)
+
+    # --- curl（干渉によるねじれ）
+    cs = max(1.5, 0.05 * p.radius) / Q
+    r = max(cs, 1.0)
+    curl = (_dx(vy, r) - _dy(vx, r)) * cs / K_CURL
+    curl = np.clip(curl, -3.0, 3.0).astype(np.float32)
+
+    # --- res（場が速く回りすぎる所は流線を解像できない）
+    ts = 1.2 / Q
+    r = max(ts, 1.0)
+    turb = (np.hypot(_dx(dx, r), _dy(dx, r)) + np.hypot(_dx(dy, r), _dy(dy, r))) * ts / K_TURB
+    res = (1.0 / (1.0 + (0.85 * turb) ** 2)).astype(np.float32)
+
+    amp_eff = (amp * (0.55 + 0.45 * res)).astype(np.float32)
+
+    LAST.clear()
+    LAST.update(mag=mag, mag_q=mag_q, rms_mag=_global_rms(mag_q),
+                phi=phi, rms_phi=_global_rms(phi),
+                amp_raw=amp_raw, curl_raw=curl * K_CURL, turb_raw=turb * K_TURB,
+                phi_scale=phi_scale)
+
+    # --- 引き伸ばし用の放射場（-grad phi）
+    gs = max(p.radius * 0.10, 2.0) / Q
+    r = max(gs, 1.0)
+    rx = -_dx(phi_n, r)
+    ry = -_dy(phi_n, r)
+    if abs(p.stretch_swirl) > 1e-4:
+        th = p.stretch_swirl * (np.pi / 2.0)
+        c, sn = np.cos(th), np.sin(th)
+        rx, ry = c * rx - sn * ry, sn * rx + c * ry
+    m = np.hypot(rx, ry) + EPS
+    rx = (rx / m).astype(np.float32); ry = (ry / m).astype(np.float32)
+
+    return {
+        "A": np.stack([dx, dy, flow, curl], -1).astype(np.float32),   # FieldA
+        "B": np.stack([amp_eff, phi_n, res, np.zeros_like(res)], -1).astype(np.float32),
+        "R": np.stack([rx, ry], -1).astype(np.float32),               # Radial
+        "conf": conf,
+        "shape": (h, w),
+    }
+
+
+def _step_count(length, step_px, cap):
+    return int(np.clip(round(abs(length) / max(step_px, 0.2)), 8, cap))
+
+
+# ==========================================================  P4 : 流線変位
+def advect(rgb, F, p: GpuParams):
+    h, w = rgb.shape[:2]
+    Q = FIELD_DIV
+    A = F["A"]; B = F["B"]
+    yy, xx = _grid((h, w))
+
+    n = _step_count(p.flow_length, p.step_px, p.steps)
+    hstep = p.flow_length / n
+    # 色収差: 同じ経路の別の位置を使う（3 回追わない）
+    fr = 1.0 + 0.35 * p.chroma
+    fb = 1.0 - 0.35 * p.chroma
+    nmax = int(np.ceil(n * max(fr, 1.0)))
+
+    amp_eff = d2d_up(B[..., 0], (h, w))
+    k_all = p.strength * amp_eff
+
+    px = xx.copy(); py = yy.copy()
+    a0 = _clampsamp(A, yy / Q, xx / Q)
+    d_x = (-a0[..., 0]).copy(); d_y = (-a0[..., 1]).copy()
+
+    caps = {}
+    targets = sorted({max(int(round(n * fb)), 1), n, min(nmax, int(round(n * fr)))})
+    for i in range(nmax):
+        a = _clampsamp(A, py / Q, px / Q)
+        fx = -a[..., 0]; fy = -a[..., 1]
+        gate = a[..., 2]; cu = a[..., 3]
+        flip = np.where(fx * d_x + fy * d_y < 0.0, -1.0, 1.0).astype(np.float32)
+        fx *= flip; fy *= flip
+        ang = np.arctan2(d_x * fy - d_y * fx, d_x * fx + d_y * fy)
+        turn = p.align * ang + p.curvature * cu * hstep * 0.09
+        ct, st = np.cos(turn), np.sin(turn)
+        d_x, d_y = ct * d_x - st * d_y, st * d_x + ct * d_y
+        dn = np.hypot(d_x, d_y) + EPS
+        d_x /= dn; d_y /= dn
+        step = hstep * gate
+        px = px + d_x * step
+        py = py + d_y * step
+        if (i + 1) in targets:
+            caps[i + 1] = (py.copy(), px.copy())
+
+    def fetch(idx):
+        ey, ex = caps[idx]
+        return yy + (ey - yy) * k_all, xx + (ex - xx) * k_all
+
+    sy, sx = fetch(n)
+    if p.chroma > 1e-4:
+        ry_, rx_ = fetch(targets[-1])
+        by_, bx_ = fetch(targets[0])
+        out = np.stack([_clampsamp(rgb[..., 0], ry_, rx_),
+                        _clampsamp(rgb[..., 1], sy, sx),
+                        _clampsamp(rgb[..., 2], by_, bx_)], -1)
+    else:
+        out = _clampsamp(rgb, sy, sx)
+
+    if p.shade > 1e-4:
+        sh = _clampsamp(amp_eff, sy, sx) - amp_eff
+        out = out * (1.0 + p.shade * 1.2 * sh[..., None])
+    return out.astype(np.float32), (sy, sx)
+
+
+# ==========================================================  P5 : 引き伸ばし
+def stretch(colour, F, p: GpuParams):
+    """1/STRETCH_DIV 解像度で ping-pong 伝播させ、等倍へ戻す。"""
+    h, w = colour.shape[:2]
+    S = STRETCH_DIV
+    Q = FIELD_DIV
+    col0 = d2d_down(colour, S)
+    conf_s = d2d_down(F["conf"], S)
+    lh, lw = col0.shape[:2]
+    yy, xx = _grid((lh, lw))
+
+    # 放射場を 1/S へ拡大（場は 1/Q なので Q/S 倍）
+    R = d2d_up(F["R"], (lh, lw))
+    m = np.hypot(R[..., 0], R[..., 1]) + EPS
+    dx = R[..., 0] / m; dy = R[..., 1] / m
+
+    prio = (conf_s ** 1.2).astype(np.float32)
+    if p.stretch_scale > 0.3:
+        prio = d2d_blur(prio, p.stretch_scale / S)
+
+    total_px = p.flow_length
+    n = _step_count(total_px, STRETCH_STEP_PX, p.stretch_steps)
+    hs = (total_px / n) / S              # texel 単位の歩幅
+    tie = 0.03 / max(total_px, 1.0)
+
+    pick = p.stretch_pick / S
+    col = _clampsamp(col0, yy - dy * pick, xx - dx * pick)
+    score = prio.copy()                  # score = 優先度 - tie * 伝播距離
+
+    for _ in range(n):
+        sy = yy - dy * hs
+        sx = xx - dx * hs
+        c2 = _clampsamp(col, sy, sx)
+        s2 = _clampsamp(score, sy, sx) - tie * hs * S
+        better = s2 > score
+        score = np.where(better, s2, score).astype(np.float32)
+        col = np.where(better[..., None], c2, col).astype(np.float32)
+
+    return d2d_up(col, (h, w)), d2d_up(score, (h, w))
+
+
+# ==========================================================  合成
+def render(rgb, p: GpuParams, F=None):
+    rgb = rgb.astype(np.float32)
+    if F is None:
+        F = build_field(rgb, p)
+    out, _ = advect(rgb, F, p)
+
+    if p.stretch > 1e-4:
+        st, q = stretch(out, F, p)
+        # score = prio - tie*dist なので、gate は tie*total/2 分だけ下げて補正する
+        covered = q >= (p.stretch_gate - 0.015)
+        k = (covered.astype(np.float32) * p.stretch)[..., None]
+        out = out * (1.0 - k) + st * k
+
+    if p.preserve_original > 1e-4:
+        out = out * (1.0 - p.preserve_original) + rgb * p.preserve_original
+    return np.clip(out, 0.0, 1.0).astype(np.float32), F

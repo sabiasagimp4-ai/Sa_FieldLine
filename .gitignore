@@ -1,4 +1,5 @@
+bin/
+obj/
+*.user
 __pycache__/
-*.pyc
-.venv/
 prototype/out/
