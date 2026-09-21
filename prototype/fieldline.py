@@ -431,75 +431,65 @@ def _priority_map(lin: np.ndarray, fieldset, mode: str) -> np.ndarray:
     return np.zeros_like(l)  # far: 優先度なし → 常に上書き = 最遠点を保持
 
 
-def flow_hold(fieldset, lin: np.ndarray, p: Params, sign: float = -1.0,
-              length_scale: float = 1.0):
-    """流線をさかのぼり、最も優先度の高いサンプルの色を **1つだけ** 選んで塗る。
+def flow_flood(fieldset, lin: np.ndarray, p: Params, length_scale: float = 1.0):
+    """輪郭の色を、場に沿って **1歩ずつ隣へ伝播** させる。
 
-    平均しないので色が帯のまま伸び、優先度の順位が入れ替わる所で縁が立つ。
-    これが参考画像のような「引き伸ばし」になる。平均（smear）はボケにしかならない。
+    1画素ずつ長い流線を追うと、鞍点の近くで隣接画素の流線が指数的に離れ、
+    隣同士が別の輪郭に着いてしまう。結果は櫛状の破線になり、
+    解像度を上げても消えない（画素のエイリアスではなく実構造のため）。
+
+    各反復で 1 歩上流（輪郭側）だけを見て、より強い輪郭から来た色を
+    受け継ぐ形にすると、隣接画素は必ず近い結果になり縞が出ない。
+    伝播距離も一緒に運ぶので、塗る範囲の境界も滑らかになる。
     """
     h, w = lin.shape[:2]
     yy, xx = np.meshgrid(np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij")
-    px, py = xx.copy(), yy.copy()
 
-    dx0, dy0 = fieldset["dx"], fieldset["dy"]
-    d_x = (sign * dx0).copy()
-    d_y = (sign * dy0).copy()
+    dx, dy = fieldset["dx"], fieldset["dy"]
 
     prio = _priority_map(lin, fieldset, p.stretch_mode)
-    # 優先度が高周波だと argmax が細かく切り替わって「引っ掻き傷」になる。
-    # ぼかすと切り替わりが疎になり、ストロークが太くなる。
     if p.stretch_scale > 0.3:
         prio = gaussian_filter(prio, p.stretch_scale, mode="reflect")
-    always = p.stretch_mode == "far"
+    prio = prio.astype(np.float32)
 
     total = p.flow_length * length_scale
     n = _step_count(p, total)
     hstep = total / n
 
-    jit = 1.0
+    # 輪郭ちょうどは線画の色なので、少し内側（上流）から色を拾う
+    if p.stretch_pick > 1e-3:
+        col = _sample(lin, yy - dy * p.stretch_pick, xx - dx * p.stretch_pick)
+    else:
+        col = lin.copy()
+
+    src = prio.copy()                      # 受け継いだ輪郭の強さ
+    dist = np.zeros((h, w), np.float32)    # そこから伝播してきた距離
+
     if p.stretch_jitter > 1e-4:
         rng = np.random.default_rng(p.seed + 991)
         nz = gaussian_filter(rng.random((h, w)).astype(np.float32),
                              max(p.stretch_jitter_scale, 0.4), mode="reflect")
         nz = (nz - nz.min()) / (np.ptp(nz) + EPS)
-        jit = (1.0 - p.stretch_jitter + p.stretch_jitter * nz * 2.0)
+        reach = total * (1.0 - p.stretch_jitter + p.stretch_jitter * nz * 2.0)
+    else:
+        reach = np.full((h, w), total, np.float32)
 
-    best_c = lin.copy()
-    best_q = (prio * 1.0).astype(np.float32) if not always else np.full((h, w), -1e9, np.float32)
+    # 同点なら近い輪郭を採る（判定を空間的に安定させるための微小な距離項）
+    tie = 0.03 / max(total, 1.0)
 
-    for i in range(n):
-        fx = sign * _sample(dx0, py, px)
-        fy = sign * _sample(dy0, py, px)
-        gate = _sample(fieldset["flow"], py, px)
-        cu = _sample(fieldset["curl"], py, px)
+    for _ in range(n):
+        sy = yy - dy * hstep
+        sx = xx - dx * hstep
+        c2 = _sample(col, sy, sx)
+        s2 = _sample(src, sy, sx)
+        d2 = _sample(dist, sy, sx) + hstep
 
-        flip = np.where(fx * d_x + fy * d_y < 0.0, -1.0, 1.0).astype(np.float32)
-        fx *= flip
-        fy *= flip
-        ang = np.arctan2(d_x * fy - d_y * fx, d_x * fx + d_y * fy)
-        turn = p.align * ang + p.curvature * cu * hstep * 0.09
-        ct, st = np.cos(turn), np.sin(turn)
-        d_x, d_y = ct * d_x - st * d_y, st * d_x + ct * d_y
-        dn = np.hypot(d_x, d_y) + EPS
-        d_x /= dn
-        d_y /= dn
+        better = (s2 - tie * d2 > src - tie * dist) & (d2 <= reach)
+        src = np.where(better, s2, src).astype(np.float32)
+        dist = np.where(better, d2, dist).astype(np.float32)
+        col = np.where(better[..., None], c2, col).astype(np.float32)
 
-        px = px + d_x * hstep * gate * jit
-        py = py + d_y * hstep * gate * jit
-
-        t = (i + 1) / n
-        w_i = float(np.exp(-p.stretch_decay * t))
-        q = (float(i) if always
-             else _sample(prio, py, px) * w_i + p.stretch_drag * t)
-        # 輪郭ちょうどの画素は線画の色なので、少し上流（面の側）から色を拾う
-        c = _sample(lin, py + d_y * p.stretch_pick, px + d_x * p.stretch_pick)
-
-        better = q > best_q
-        best_q = np.where(better, q, best_q).astype(np.float32)
-        best_c = np.where(better[..., None], c, best_c)
-
-    return best_c.astype(np.float32), best_q.astype(np.float32)
+    return col, src, dist
 
 
 # ------------------------------------------------------------------- render
@@ -530,15 +520,10 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
     # --- 発展: 流線に沿って色を帯のまま引き伸ばす ---
     if p.stretch > 1e-4:
         sfs = radial_fieldset(fieldset, p) if p.stretch_radial else fieldset
-        st, q = flow_hold(sfs, out, p, sign=-1.0)
-        if p.bidirectional:
-            st2, q2 = flow_hold(sfs, out, p, sign=1.0)
-            take = (q2 > q)[..., None]
-            st = np.where(take, st2, st)
-            q = np.maximum(q, q2)
+        st, q, dist = flow_flood(sfs, out, p)
         # 輪郭を掴めた画素は **完全不透明** で上書きする（下の色は残さない）。
         # 掴めなかった画素だけ元のまま。減衰も距離ブレンドも掛けない。
-        covered = (q >= p.stretch_gate)
+        covered = (q >= p.stretch_gate) & (dist > 0.0)
         if p.stretch >= 0.999:
             out = np.where(covered[..., None], st, out)
         else:
@@ -651,6 +636,8 @@ def render_supersampled(rgb_srgb: np.ndarray, p: Params, ss: int = 2):
     q = replace(p, radius=p.radius * ss, flow_length=p.flow_length * ss,
                 base_sigma=p.base_sigma * ss, step_px=p.step_px * ss,
                 line_grain=p.line_grain * ss, streamer_grain=p.streamer_grain * ss,
+                stretch_scale=p.stretch_scale * ss, stretch_pick=p.stretch_pick * ss,
+                stretch_jitter_scale=p.stretch_jitter_scale * ss,
                 steps=p.steps)
     out, _ = render(big, q)
     return out.reshape(h, ss, w, ss, 3).mean(axis=(1, 3)).astype(np.float32)

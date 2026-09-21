@@ -92,28 +92,28 @@ PRESETS: list[tuple[str, str, dict]] = [
 
     ("18_pull_near", "端の色を引き伸ばす（近い / 元が残る）", dict(
         strength=0.0, radius=150, flow_length=60, curvature=1.0,
-        smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=1.25,
+        smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=0.9,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0, bidirectional=False)),
+        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
 
     ("19_pull", "端の色を引き伸ばす（標準）", dict(
         strength=0.0, radius=150, flow_length=140, curvature=1.0,
-        smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=1.25,
+        smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=0.9,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0, bidirectional=False)),
+        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
 
     ("20_pull_far", "端の色を引き伸ばす（遠い / ほぼ全面が塗り替わる）", dict(
         strength=0.0, radius=150, flow_length=280, curvature=1.0,
-        smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=1.25,
+        smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=0.9,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0, bidirectional=False)),
+        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
 
     ("21_pull_magnetic", "放射の引き伸ばし ＋ 磁力線の変位（場を分離）", dict(
         strength=0.5, radius=150, flow_length=140, curvature=1.0, swirl=1.0,
         smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=1.25,
         line_draw=0.35, line_grain=1.6,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0, bidirectional=False)),
+        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
 
     ("14_preserve", "Preserve Original 0.5（強い設定を半分残す）", dict(
         strength=1.0, radius=160, flow_length=170, curvature=2.0, swirl=0.35,
