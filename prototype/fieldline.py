@@ -67,9 +67,13 @@ class Params:
     stretch_mode: str = "edge"     # edge / contrast / bright / dark / vivid / far
     stretch_decay: float = 1.2     # 遠いサンプルの不利さ（大きいほど短い）
     stretch_scale: float = 0.0     # 優先度マップのぼかし [px]。**ストロークの太さ**
-    stretch_drag: float = 0.35     # 遠いサンプルほど有利にする量。
-                                   # 平坦な面は最遠点＝丸ごとドラッグされ、
-                                   # 輪郭のある所は輪郭の色が居座って帯になる
+    stretch_drag: float = 0.0      # 遠いサンプルほど有利にする量。
+                                   # >0 にすると平坦な面まで丸ごとドラッグされる
+                                   # （＝「画像を引き伸ばす」側の挙動）。
+                                   # 端の色だけを引き出したいときは 0 のまま。
+    stretch_pick: float = 3.0      # 色を拾う位置を、輪郭からさらに上流へ [px]
+                                   # ずらす。線画の黒ではなく面の色を引き出す。
+    stretch_gate: float = 0.12     # これ未満しか輪郭を掴めなかった画素は元のまま
     stretch_jitter: float = 0.0    # 流線ごとに長さをばらつかせる（筆の毛）
     stretch_jitter_scale: float = 6.0  # ばらつきの粒 [px]
     posterize: int = 0             # 0で無効。色を階調に丸めてフラットにする
@@ -456,13 +460,14 @@ def flow_hold(fieldset, lin: np.ndarray, p: Params, sign: float = -1.0,
         w_i = float(np.exp(-p.stretch_decay * t))
         q = (float(i) if always
              else _sample(prio, py, px) * w_i + p.stretch_drag * t)
-        c = _sample(lin, py, px)
+        # 輪郭ちょうどの画素は線画の色なので、少し上流（面の側）から色を拾う
+        c = _sample(lin, py + d_y * p.stretch_pick, px + d_x * p.stretch_pick)
 
         better = q > best_q
         best_q = np.where(better, q, best_q).astype(np.float32)
         best_c = np.where(better[..., None], c, best_c)
 
-    return best_c.astype(np.float32)
+    return best_c.astype(np.float32), best_q.astype(np.float32)
 
 
 # ------------------------------------------------------------------- render
@@ -492,11 +497,15 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
 
     # --- 発展: 流線に沿って色を帯のまま引き伸ばす ---
     if p.stretch > 1e-4:
-        st = flow_hold(fieldset, out, p, sign=-1.0)
+        st, q = flow_hold(fieldset, out, p, sign=-1.0)
         if p.bidirectional:
-            st2 = flow_hold(fieldset, out, p, sign=1.0)
-            st = np.where(luma(st)[..., None] >= luma(st2)[..., None], st, st2)
-        k = np.clip(p.stretch * (0.25 + 0.75 * amp), 0.0, 1.0)[..., None]
+            st2, q2 = flow_hold(fieldset, out, p, sign=1.0)
+            take = (q2 > q)[..., None]
+            st = np.where(take, st2, st)
+            q = np.maximum(q, q2)
+        # 輪郭を掴めなかった画素は元のまま残す
+        grab = smoothstep(p.stretch_gate, p.stretch_gate + 0.18, q).astype(np.float32)
+        k = np.clip(p.stretch * grab * (0.30 + 0.70 * amp), 0.0, 1.0)[..., None]
         out = out * (1.0 - k) + st * k
 
     # --- 発展: エッジの色を流線に沿って引き出す（力線本体） ---
