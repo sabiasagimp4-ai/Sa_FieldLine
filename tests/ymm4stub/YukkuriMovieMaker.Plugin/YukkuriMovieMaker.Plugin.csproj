@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>YukkuriMovieMaker.Plugin</AssemblyName>
+    <RootNamespace>YukkuriMovieMaker</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- クラスライブラリは既定で nuget の dll を出力に置かない。
+         ここでは Vortice の dll ごと一式を YMM4DirPath に見立てて使うので要る。 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Vortice は YMM4 と同じものが nuget にあるので、ここだけは本物を使う。
+         組み込みエフェクトの名前・列挙・SetValue の添字の型はこれで実際に検査される。 -->
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+  </ItemGroup>
+</Project>

@@ -171,6 +171,22 @@ dotnet build .\SaFieldLine.csproj -c Release `
 
 `.github/workflows/release.yml` が同じ手順を CI で回し、`.ymme` を Release に添付する。
 
+### 検査
+
+Windows も YMM4 も無い環境で回せる検査が 3 つある。`.github/workflows/check.yml` が
+push ごとに全部回す。
+
+```bash
+sudo apt-get install -y glslang-tools dotnet-sdk-10.0
+sh tests/hlsl_syntax_check.sh       # 15 本の HLSL の構文
+sh tests/csharp_compile_check.sh    # C# の型検査（YMM4 はスタブ / Vortice は本物）
+python3 tests/gpu_pipeline_regression.py   # 参照実装とのずれ
+```
+
+C# の型検査は `tests/ymm4stub` の空実装を YMM4 の DLL に見立てて本体をビルドする。
+Vortice だけは nuget の本物を使うので、組み込みエフェクトの名前・列挙・
+`SetValue` の型はここで実際に検査される（詳しくは `tests/ymm4stub/README.md`）。
+
 ### UI パラメータ
 
 | 名前 | 既定 | 内容 |
@@ -187,7 +203,7 @@ dotnet build .\SaFieldLine.csproj -c Release `
 | 引き伸ばし | 0% | 輪郭の色を外向きに引き伸ばす。届いた画素は**完全不透明**で塗り替わる |
 | 引き伸ばし閾値 | 35% | これ未満しか輪郭を掴めなかった画素は元のまま |
 | 引き伸ばしの太さ | 0px | ストローク幅（優先度マップのぼかし） |
-| 色を拾う位置 | 3px | 輪郭より内側の色を引き出す。線画の黒を避けたい時に上げる |
+| 色を拾う位置 | 4px | 輪郭より内側の色を引き出す。φ の尾根まで登って拾うので、これは探す距離の**下限** |
 | 引き伸ばしのひねり | 0% | 0% で真っ直ぐ外向き |
 | 力線を描く | 0% | 場そのものを線として重ねる（砂鉄） |
 | 力線の粒 / 濃さ | 1.4px / 100% | 線の太さとコントラスト |

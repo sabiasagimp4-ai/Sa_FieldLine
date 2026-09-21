@@ -222,21 +222,55 @@ Sa_chromablur と同じく、**入力の格納値のまま**扱う（sRGB↔リ�
 - **`StretchStep` はパス数ぶんインスタンスを作る**（遅延生成、上限 256）。
   必要な数だけ `Composite` に繋ぎ、余りは参照されないので描画もされない。
 
+## 検査できた所
+
+Windows と YMM4 が無くても、次の 3 つは自動で回せる（`.github/workflows/check.yml`）。
+
+| 検査 | 何を見るか |
+| --- | --- |
+| `tests/hlsl_syntax_check.sh` | 15 本の HLSL を glslang の HLSL フロントエンドに通す |
+| `tests/csharp_compile_check.sh` | YMM4 をスタブに差し替えて C# を型検査する。Vortice は nuget の本物 |
+| `tests/gpu_pipeline_regression.py` | GPU で作れる形に落とした実装が参照実装とずれていないか |
+
+C# は `TreatWarningsAsErrors` 込みで Debug / Release とも警告 0 で通る。
+`ShaderResourceLoader.Get(...)` の名前が埋め込んだ `.cso` の論理名と一致することも見ている。
+
+**Vortice はスタブではなく本物を使う**ので、組み込みエフェクトまわりは実質検査済み。
+
+- `Vortice.Direct2D1.Effects` の `Border` / `GaussianBlur` / `Scale` / `Crop` は
+  いずれも `ID2D1DeviceContext` を取るコンストラクタを持つ。
+- プロパティは**添字ではなく型つきの名前**で設定する。`SetValue` の添字の型は
+  Vortice のバージョンで `int` と `uint` の間を動いていて、生の添字で書くと移植性が落ちる。
+- 精度（`D2D1_PROPERTY_PRECISION`）は**列挙型**なので、`int` で渡すと D2D に弾かれる。
+  `Property.Precision` と `BufferPrecision.PerChannel16Float` をそのまま渡す。
+  ここは最初 `unchecked((int)0x80000007)` を投げていて、型検査で落ちて気づいた。
+- カスタムエフェクト側では精度を設定していない。YMM4 の `SetValue(int, int)` からは
+  列挙として渡せないため。組み込みエフェクトで上げておけば入力から継承されるので、
+  `Luma` 以外の全パスに伝わる（`Luma` の入力は素材そのもので、どのみち 8bit）。
+
+多入力（`[CustomEffect(5)]` / `(6)`）は、YMM4 公式のコミュニティプラグインが
+`[CustomEffect(12)]` / `(13)` まで使っているので登録できる。
+シェーダの前置き（`#define D2D_ENTRY main` と `<d2d1effecthelpers.hlsli>` だけで
+`D2DGetScenePosition` と `D2DSampleInputAtPosition` を使う形）も、
+リリース済みの `Sa_chromablur` が同じ形で fxc を通っている。
+
 ## 未確認の点
 
-Windows と YMM4 が要るのでこの環境では確かめられていない。最初のビルドで見る所:
-
-1. `Vortice.Direct2D1.Effects` の `Border` / `GaussianBlur` / `Scale` / `Crop`
-   のクラス名とコンストラクタ。プロパティはインデックス（`d2d1effects.h` の値）で
-   設定しているので、名前が変わっていても影響しない。
-2. `D2D1CustomShaderEffectBase.SetValue` に標準プロパティのインデックス
-   （負の値）を渡せるか。渡せない場合は try/catch で無視され、
-   精度は上流の組み込みエフェクトから継承される。
-3. 多入力（`[CustomEffect(5)]` / `(6)`）の登録。
-4. 長い `StretchStep` の連鎖で中間バッファがどれだけ積まれるか。
-   等倍 RGBA16F を 93 枚ぶん同時に持つと 1.5GB になるので、
-   D2D が中間を使い回さない場合はここが効く。その時は `FieldLineProcessor` に
-   伝播用の `Scale(0.5)` を戻して 1/2 にする（眠くなるが 1 パスが 1/4 になる）。
+1. **YMM4 スタブが本物と食い違っていないか。** 署名は
+   [公式サンプル](https://github.com/manju-summoner/YukkuriMovieMaker4PluginSamples)、
+   [公式コミュニティプラグイン](https://github.com/manju-summoner/YukkuriMovieMaker.Plugin.Community)、
+   リリース済みの `Sa_chromablur` から写しているが、本物の DLL とは突き合わせていない。
+   `SetInput` の添字は、コミュニティプラグインがループ変数を渡しているので `int` と判断した。
+2. **YMM4 が積んでいる Vortice のバージョン。** 古いと `SetValue` の添字が `int` で、
+   `FieldLineGraph.Float16` の `(uint)` がコンパイルエラーになる。
+   その時は `(int)` に変える（1 行）。
+3. **長い `StretchStep` の連鎖で中間バッファがどれだけ積まれるか。**
+   連鎖は一本道（各パスの入力は「前のパス」と「場」だけ）なので、
+   D2D が中間を使い回すなら同時に要るのは数枚で済むはず。使い回さない場合は
+   等倍 RGBA16F × パス数ぶん積まれるので、`FieldLineProcessor` に伝播用の
+   `Scale(0.5)` を戻して 1/2 にする（眠くなるが 1 パスが 1/4 になる）。
+4. **実際の絵。** シェーダは構文しか見ていない。fxc の ps_4_0 で通るか、
+   GPU の出力がプロトタイプと合うかは動かすまで分からない。
 
 ## 動画にするときの注意
 
