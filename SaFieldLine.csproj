@@ -31,8 +31,8 @@
     <FieldLineShader Include="Shaders\Confidence.hlsl"><Inputs>2</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Spread.hlsl"><Inputs>6</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\FieldDir.hlsl"><Inputs>2</Inputs></FieldLineShader>
-    <FieldLineShader Include="Shaders\FieldA.hlsl"><Inputs>1</Inputs></FieldLineShader>
-    <FieldLineShader Include="Shaders\FieldB.hlsl"><Inputs>3</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\FieldA.hlsl"><Inputs>2</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\FieldB.hlsl"><Inputs>4</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Radial.hlsl"><Inputs>1</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Advect.hlsl"><Inputs>3</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Priority.hlsl"><Inputs>1</Inputs></FieldLineShader>

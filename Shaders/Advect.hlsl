@@ -26,8 +26,9 @@ D2D_PS_ENTRY(main)
         return D2DSampleInputAtPosition(0, saClampToRect(p, RECT));
 
     float2 fp = saClampToRect(p * FIELD_SCALE, FIELD_RECT);
-    float ampEff = D2DSampleInputAtPosition(2, fp).r;
-    float k = STRENGTH * ampEff;
+    float2 ar = D2DSampleInputAtPosition(2, fp).rb;      // amp と res
+    // 方向場が速く回る所は流線を解像できないので、変位も抑える
+    float k = STRENGTH * ar.x * (0.55 + 0.45 * ar.y);
 
     int nG = (int)STEP_G;
     int nR = (int)STEP_R;
@@ -73,7 +74,7 @@ D2D_PS_ENTRY(main)
     if (abs(SHADE) > 1e-4)
     {
         float a2 = D2DSampleInputAtPosition(2, saClampToRect(sg * FIELD_SCALE, FIELD_RECT)).r;
-        col.rgb *= max(1.0 + SHADE * 1.2 * (a2 - ampEff), 0.0);
+        col.rgb *= max(1.0 + SHADE * 1.2 * (a2 - ar.x), 0.0);
     }
 
     return col;

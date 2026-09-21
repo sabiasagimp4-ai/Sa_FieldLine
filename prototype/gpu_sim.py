@@ -33,7 +33,7 @@ SPREAD_OCTAVES = 6
 # 局所 RMS -> リファレンスの percentile へ合わせる係数（calibrate.py で実測）
 K_MAG = 3.50           # p99(mag)  / rms(mag)
 K_PHI = 1.95           # p98(phi)  / rms(phi)
-K_COH = 0.95           # p99(|v|)。v は phi 正規化済みなので定数でよい
+K_COH = 3.10           # p99(|v|) / rms(|v|)
 K_CURL = 0.014         # p97(curl)
 K_TURB = 0.08          # p88(turb) より大きめ。smoothness を上げた時だけ緩む
 LINE_SEED_EDGE = 0.7   # 力線の種を輪郭近くへ寄せる度合い
@@ -255,7 +255,10 @@ def build_field(rgb, p: GpuParams):
     vx = d2d_blur(vx, sig); vy = d2d_blur(vy, sig)
 
     amp_raw = np.hypot(vx, vy)
-    coh = np.clip(amp_raw / K_COH, 0.0, 1.0)
+    # コヒーレンスも全画面 RMS で正規化する。定数で割ると、輪郭がまばらな素材
+    # （文字など）で場が弱くなり、効果が丸ごと沈む。
+    coh_scale = max(K_COH * _global_rms(amp_raw), 1e-4)
+    coh = np.clip(amp_raw / coh_scale, 0.0, 1.0)
     env = phi_n ** (0.35 + 1.3 * p.falloff)
     flow = (0.30 + 0.70 * np.sqrt(coh)).astype(np.float32)
     amp = (((0.10 + 0.90 * env) * (0.35 + 0.65 * coh)) ** p.amp_gamma).astype(np.float32)
@@ -276,7 +279,6 @@ def build_field(rgb, p: GpuParams):
     turb = (np.hypot(_dx(dx, r), _dy(dx, r)) + np.hypot(_dx(dy, r), _dy(dy, r))) * ts / K_TURB
     res = (1.0 / (1.0 + (0.85 * turb) ** 2)).astype(np.float32)
 
-    amp_eff = (amp * (0.55 + 0.45 * res)).astype(np.float32)
 
     LAST.clear()
     LAST.update(mag=mag, mag_q=mag_q, rms_mag=_global_rms(mag_q),
@@ -298,7 +300,9 @@ def build_field(rgb, p: GpuParams):
 
     return {
         "A": np.stack([dx, dy, flow, curl], -1).astype(np.float32),   # FieldA
-        "B": np.stack([amp_eff, phi_n, res, np.zeros_like(res)], -1).astype(np.float32),
+        # R は素の amp。res の掛け方は用途ごとに違うので、ここでは掛けない。
+        #   変位: amp * (0.55 + 0.45*res) / 発光: amp / 力線: amp * res
+        "B": np.stack([amp, phi_n, res, np.zeros_like(res)], -1).astype(np.float32),
         "R": np.stack([rx, ry], -1).astype(np.float32),               # Radial
         "conf": conf,
         "shape": (h, w),
@@ -323,7 +327,9 @@ def advect(rgb, F, p: GpuParams):
     fb = 1.0 - 0.35 * p.chroma
     nmax = int(np.ceil(n * max(fr, 1.0)))
 
-    amp_eff = d2d_up(B[..., 0], (h, w))
+    amp_raw = d2d_up(B[..., 0], (h, w))
+    res_up = d2d_up(B[..., 2], (h, w))
+    amp_eff = amp_raw * (0.55 + 0.45 * res_up)
     k_all = p.strength * amp_eff
 
     px = xx.copy(); py = yy.copy()
@@ -365,7 +371,7 @@ def advect(rgb, F, p: GpuParams):
         out = _clampsamp(rgb, sy, sx)
 
     if p.shade > 1e-4:
-        sh = _clampsamp(amp_eff, sy, sx) - amp_eff
+        sh = _clampsamp(amp_raw, sy, sx) - amp_raw
         out = out * (1.0 + p.shade * 1.2 * sh[..., None])
     return out.astype(np.float32), (sy, sx)
 
@@ -471,7 +477,11 @@ def _highlight(col, py, px):
 
 
 def _walk(col, F, p: GpuParams, sgn, n, hstep, mode):
-    """流線に沿って payload を平均する。mode 0 = 発光、1 = 力線(LIC)。"""
+    """流線に沿って payload を平均する。mode 0 = 発光、1 = 力線(LIC)。
+
+    戻り値は (payload, 実際に歩いた距離)。歩幅は場の強さでゲートされるので、
+    公称の長さとは大きく変わる。LIC の正規化にはこちらを使う。
+    """
     h, w = col.shape[:2]
     Q = p.field_div
     A = F["A"]
@@ -489,6 +499,7 @@ def _walk(col, F, p: GpuParams, sgn, n, hstep, mode):
         acc = None
         lic = _line_noise(cx, cy, phiN, p.line_grain, LINE_SEED_EDGE)
     wsum = np.ones((h, w), np.float32)
+    plen = np.zeros((h, w), np.float32)
 
     for i in range(n):
         a = _clampsamp(A, cy / Q, cx / Q)
@@ -504,8 +515,10 @@ def _walk(col, F, p: GpuParams, sgn, n, hstep, mode):
         dn = np.hypot(dxv, dyv) + EPS
         dxv /= dn
         dyv /= dn
-        cx = cx + dxv * (hstep * a[..., 2])
-        cy = cy + dyv * (hstep * a[..., 2])
+        step = hstep * a[..., 2]
+        cx = cx + dxv * step
+        cy = cy + dyv * step
+        plen = plen + step
 
         t = (i + 1) / n
         wgt = np.float32(0.5 + 0.5 * np.cos(np.pi * t))
@@ -517,8 +530,8 @@ def _walk(col, F, p: GpuParams, sgn, n, hstep, mode):
         wsum = wsum + wgt
 
     if mode == 0:
-        return acc / wsum[..., None]
-    return lic / wsum
+        return acc / wsum[..., None], plen
+    return lic / wsum, plen
 
 
 def post(col, F, p: GpuParams, original):
@@ -526,12 +539,15 @@ def post(col, F, p: GpuParams, original):
     h, w = col.shape[:2]
     out = col.copy()
     amp = d2d_up(F["B"][..., 0], (h, w))
+    res = d2d_up(F["B"][..., 2], (h, w))
 
     if p.glow > 1e-4:
         total = p.flow_length * 2.2
         n = _step_count(total, p.step_px, p.steps)
         hstep = total / n
-        g = 0.5 * (_walk(out, F, p, -1.0, n, hstep, 0) + _walk(out, F, p, 1.0, n, hstep, 0))
+        gf, _ = _walk(out, F, p, -1.0, n, hstep, 0)
+        gb, _ = _walk(out, F, p, 1.0, n, hstep, 0)
+        g = 0.5 * (gf + gb)
         g = np.clip(g * (p.glow * 2.0 * amp)[..., None], 0.0, 1.0)
         out = 1.0 - (1.0 - np.clip(out, 0.0, 1.0)) * (1.0 - g)      # screen
 
@@ -539,12 +555,20 @@ def post(col, F, p: GpuParams, original):
         total = max(p.flow_length * 1.8, 34.0)
         n = int(np.clip(round(total), 8, min(p.steps * 2, 220)))
         hstep = total / n
-        lic = 0.5 * (_walk(out, F, p, -1.0, n, hstep, 1) + _walk(out, F, p, 1.0, n, hstep, 1))
-        # 局所コントラスト正規化の代わりに、LIC の標準偏差を解析的に出して割る
+        lf, len_f = _walk(out, F, p, -1.0, n, hstep, 1)
+        lb, len_b = _walk(out, F, p, 1.0, n, hstep, 1)
+        lic = 0.5 * (lf + lb)
+        # 局所コントラスト正規化の代わりに、LIC の標準偏差を解析的に出して割る。
+        # 公称の長さではなく **実際に歩いた距離** を使う。場が強くコヒーレントな所ほど
+        # 長く歩き、平均される本数が増えて分散が下がるので、そこで線が薄くなる。
         g_eff = max(p.line_grain, 0.6)
-        sd = 0.5 * np.sqrt(g_eff / max(total, g_eff)) + 0.030
-        tex = np.clip((lic - 0.5) / sd * 0.30 * p.line_density + 0.5, 0.0, 1.0)
-        t = ((tex - 0.5) * (p.line_draw * amp) * 1.7)[..., None]
+        plen = 0.5 * (len_f + len_b)
+        sd = 0.5 * np.sqrt(g_eff / np.maximum(plen, g_eff)) + 0.030
+        # 0.36 は実測合わせ。リファレンスの局所正規化に対してコントラストが
+        # 2 割ほど足りなかったぶんを埋める。
+        tex = np.clip((lic - 0.5) / sd * 0.36 * p.line_density + 0.5, 0.0, 1.0)
+        # 力線は解像できない所（場が速く回る所）を強く抑える
+        t = ((tex - 0.5) * (p.line_draw * amp * res) * 1.7)[..., None]
         base = np.clip(out, 0.0, 1.0)
         out = np.maximum(base + t * (0.35 + 0.65 * (1.0 - np.abs(2.0 * base - 1.0))), 0.0)
 

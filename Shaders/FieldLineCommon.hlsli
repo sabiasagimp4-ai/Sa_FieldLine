@@ -27,7 +27,7 @@ static const float PI = 3.14159265358979323846;
 // 画面全体の RMS（1x1 まで縮小して求める）へ置き換えるための倍率。
 static const float K_MAG  = 3.50;
 static const float K_PHI  = 1.95;
-static const float K_COH  = 0.95;
+static const float K_COH  = 3.10;
 static const float K_CURL = 0.014;
 static const float K_TURB = 0.08;
 static const float K_GRAD = 0.30;

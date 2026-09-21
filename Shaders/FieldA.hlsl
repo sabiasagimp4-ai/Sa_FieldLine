@@ -1,4 +1,6 @@
 // P4b: 流線を追うのに必要な量だけを 1 枚にまとめる。
+// 入力 1 = |v| の全画面 RMS。コヒーレンスを定数で割ってはいけない
+// （輪郭がまばらな素材＝文字などで場が弱くなり、効果が丸ごと沈む）。
 //   RG = 進行方向（単位ベクトル） / B = 歩幅ゲート / A = curl
 // 変位パスは 1 ステップにつきこのテクスチャを 1 回読むだけで済む。
 #define D2D_ENTRY main
@@ -15,7 +17,7 @@ D2D_PS_ENTRY(main)
     float2 v = SA_DEC4(D2DGetInput(0).rg);
 
     float ampRaw = length(v);
-    float coh = saturate(ampRaw / K_COH);
+    float coh = saturate(ampRaw / max(K_COH * saRms(D2DGetInput(1)), 1e-4));
     float2 dir = ampRaw > 1e-8 ? v / ampRaw : float2(1.0, 0.0);
 
     // 流線が「どれだけ進むか」。打ち消し合う点で暴れないように抑えるだけで、

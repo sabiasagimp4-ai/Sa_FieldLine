@@ -1,6 +1,9 @@
 // P4c: 効果の「掛かり具合」。
-//   R = amp（距離減衰込み、res 済み） / G = phi / B = res
-// 入力 0 = 平滑化後の方向場、入力 1 = Spread、入力 2 = phi の全画面 RMS。
+//   R = amp（距離減衰込み、素のまま） / G = phi / B = res
+//
+// res の掛け方は用途ごとに違うので、ここでは掛けずに両方渡す。
+//   変位: amp * (0.55 + 0.45*res) / 発光: amp / 力線: amp * res
+// 入力 0 = 平滑化後の方向場、1 = Spread、2 = phi の全画面 RMS、3 = |v| の全画面 RMS。
 #define D2D_ENTRY main
 #include <d2d1effecthelpers.hlsli>
 #include "FieldLineCommon.hlsli"
@@ -22,7 +25,7 @@ D2D_PS_ENTRY(main)
 {
     float2 p = D2DGetScenePosition().xy;
     float ampRaw = length(SA_DEC4(D2DGetInput(0).rg));
-    float coh = saturate(ampRaw / K_COH);
+    float coh = saturate(ampRaw / max(K_COH * saRms(D2DGetInput(3)), 1e-4));
 
     float phiScale = max(K_PHI * saRms(D2DGetInput(2)), 1e-4);
     float phiN = saturate(D2DGetInput(1).b / phiScale);
@@ -44,5 +47,5 @@ D2D_PS_ENTRY(main)
     turb *= TURB_GAIN / K_TURB;
     float res = 1.0 / (1.0 + (0.85 * turb) * (0.85 * turb));
 
-    return float4(amp * (0.55 + 0.45 * res), phiN, res, 1.0);
+    return float4(amp, phiN, res, 1.0);
 }

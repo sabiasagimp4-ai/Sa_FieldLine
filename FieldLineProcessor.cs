@@ -63,6 +63,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     readonly ConfidencePass confidence = null!;
     readonly SpreadPass spread = null!;
     readonly StatsPass phiStats = null!;
+    readonly StatsPass vStats = null!;
     readonly FieldDirPass fieldDir = null!;
     readonly FieldAPass fieldA = null!;
     readonly FieldBPass fieldB = null!;
@@ -74,7 +75,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     readonly PostPass post = null!;
 
     readonly ID2D1Image lumaOut = null!, edgeOut = null!, magStatsOut = null!, confOut = null!;
-    readonly ID2D1Image spreadOut = null!, phiStatsOut = null!, dirOut = null!;
+    readonly ID2D1Image spreadOut = null!, phiStatsOut = null!, vStatsOut = null!, dirOut = null!;
     readonly ID2D1Image fieldAOut = null!, fieldBOut = null!, radialOut = null!;
     readonly ID2D1Image advectOut = null!, prioOut = null!, initOut = null!;
     readonly ID2D1Image compositeOut = null!, postOut = null!;
@@ -90,6 +91,8 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     readonly Node[] spreadCrop = new Node[SpreadOctaves];
     readonly Node[] phiReduce = new Node[ReduceLevels];
     readonly Node phiNorm = null!;
+    readonly Node[] vReduce = new Node[ReduceLevels];
+    readonly Node vNorm = null!;
     readonly Node dirBorder = null!, dirBlur = null!, dirCrop = null!;
     readonly Node prioBorder = null!, prioBlur = null!, prioCrop = null!;
 
@@ -140,6 +143,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         confidence = Keep(new ConfidencePass(devices), out confOut);
         spread = Keep(new SpreadPass(devices), out spreadOut);
         phiStats = Keep(new StatsPass(devices), out phiStatsOut);
+        vStats = Keep(new StatsPass(devices), out vStatsOut);
         fieldDir = Keep(new FieldDirPass(devices), out dirOut);
         fieldA = Keep(new FieldAPass(devices), out fieldAOut);
         fieldB = Keep(new FieldBPass(devices), out fieldBOut);
@@ -210,10 +214,22 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         dirCrop = NewCrop();
         dirCrop.Effect.SetInput(0, dirBlur.Output, true);
 
+        // コヒーレンスも全画面 RMS で正規化する。定数で割ると、輪郭がまばらな素材
+        // （文字など）で場が弱くなり、効果が丸ごと沈む。
+        vStats.SetInput(0, dirCrop.Output, true);
+        for (var i = 0; i < ReduceLevels; i++)
+        {
+            vReduce[i] = NewScale(0.5f);
+            vReduce[i].Effect.SetInput(0, i == 0 ? vStatsOut : vReduce[i - 1].Output, true);
+        }
+        vNorm = NewBorder();
+
         fieldA.SetInput(0, dirCrop.Output, true);
+        fieldA.SetInput(1, vNorm.Output, true);
         fieldB.SetInput(0, dirCrop.Output, true);
         fieldB.SetInput(1, spreadOut, true);
         fieldB.SetInput(2, phiNorm.Output, true);
+        fieldB.SetInput(3, vNorm.Output, true);
 
         // --- P5: 引き伸ばし専用の放射場
         radial.SetInput(0, fieldBOut, true);
@@ -323,6 +339,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         {
             magNorm.Effect.SetInput(0, magReduce[levels - 1].Output, true);
             phiNorm.Effect.SetInput(0, phiReduce[levels - 1].Output, true);
+            vNorm.Effect.SetInput(0, vReduce[levels - 1].Output, true);
             wiredReduceLevels = levels;
         }
 
@@ -354,8 +371,13 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         edge.C5 = new Vector4(0f, 0f, 2f, 0f);
 
         luma.C5 = Vector4.Zero;
+        // Stats のモード: 0 = B チャンネル、1 = RG の折込ベクトル
+        magStats.C0 = Vector4.Zero;
         magStats.C5 = Vector4.Zero;
+        phiStats.C0 = Vector4.Zero;
         phiStats.C5 = Vector4.Zero;
+        vStats.C0 = new Vector4(1f, 0f, 0f, 0f);
+        vStats.C5 = Vector4.Zero;
         priority.C5 = Vector4.Zero;
         // 掴めた画素は完全不透明で塗り替える。score には tie*距離 が入っているので、
         // 閾値をその半分ぶん下げて補正する。
