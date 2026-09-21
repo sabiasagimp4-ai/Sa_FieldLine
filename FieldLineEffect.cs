@@ -69,9 +69,9 @@ public sealed class FieldLineEffect : VideoEffectBase
     [AnimationSlider("F1", "px", 0, 64)]
     public Animation StretchWidth { get; } = new(0, 0, 256);
 
-    [Display(Name = "色を拾う位置", Description = "輪郭よりどれだけ内側の色を引き出すか。線画の黒ではなく面の色を出したい時に上げます", Order = 12)]
+    [Display(Name = "色を拾う位置", Description = "輪郭よりどれだけ内側の色を探すか。上流を探して「自分と実際に違う色」を拾います。輪郭の細かさに応じて自動で広がるので、これはその下限です", Order = 12)]
     [AnimationSlider("F1", "px", 0, 32)]
-    public Animation StretchPick { get; } = new(3, 0, 128);
+    public Animation StretchPick { get; } = new(4, 0, 128);
 
     [Display(Name = "引き伸ばしのひねり", Description = "放射をひねります。0%で真っ直ぐ外向きです", Order = 13)]
     [AnimationSlider("F1", "%", -100, 100)]

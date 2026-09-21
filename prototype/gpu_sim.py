@@ -37,6 +37,8 @@ K_COH = 3.10           # p99(|v|) / rms(|v|)
 K_CURL = 0.014         # p97(curl)
 K_TURB = 0.08          # p88(turb) より大きめ。smoothness を上げた時だけ緩む
 LINE_SEED_EDGE = 0.7   # 力線の種を輪郭近くへ寄せる度合い
+PICK_GAIN = 6.0        # 色を拾う時、φ の登り幅に対する重みの立ち上がり
+PICK_OWN = 0.02        # 登り先が無い時に自分の色を残すための基礎重み
 K_GRAD = 0.30          # p99(|grad phi| * gs / phi_scale)
 
 # 較正用に build_field が途中経過を残す（calibrate_gpu.py が読む）
@@ -309,6 +311,17 @@ def build_field(rgb, p: GpuParams):
     }
 
 
+def pick_range(p: "GpuParams") -> float:
+    """色を拾うために上流を探す距離 [px]。
+
+    conf は輪郭のスケール（= detail_scale が決めるオクターブの σ）ぶん太い帯になる。
+    その帯を跨げない距離では、帯の外縁が背景色を運ぶ種になってしまう。
+    """
+    mu = (1.0 - float(np.clip(p.detail_scale, 0.0, 1.0))) * (EDGE_OCTAVES - 1)
+    edge_sigma = p.base_sigma * (2.0 ** mu)
+    return max(p.stretch_pick, 2.0 * edge_sigma)
+
+
 def _step_count(length, step_px, cap):
     return int(np.clip(round(abs(length) / max(step_px, 0.2)), 8, cap))
 
@@ -401,8 +414,28 @@ def stretch(colour, F, p: GpuParams):
     hs = (total_px / n) / S              # texel 単位の歩幅
     tie = 0.03 / max(total_px, 1.0)
 
-    pick = p.stretch_pick / S
-    col = _clampsamp(col0, yy - dy * pick, xx - dx * pick)
+    # 固定距離で拾ってはいけない。conf は輪郭のスケールぶん太い帯になるので、
+    # 帯の外縁にいる画素は数 px 上流を見ても背景のままで、
+    # 「背景色を運ぶ強い種」になって本来の輪郭色を塞ぐ。帯が眠くなる原因はこれ。
+    # 代わりに φ の尾根まで登り、登り切った所の色を拾う。すでに尾根にいる画素
+    # （＝構造の内側）は自分の色のままになるので、文字や線画の面が塗り潰されない。
+    # argmax で 1 点を選ぶと、隣接画素で選ばれる点が切り替わって細かい縞が出る。
+    # 「自分より φ が高いぶん」で重み付けした平均にすると空間的に滑らかになり、
+    # なおかつ尾根の色が支配的になる。登り先が無ければ自分の色のまま。
+    pick = pick_range(p) / S
+    phi = d2d_up(F["B"][..., 1], (lh, lw))
+    own = _clampsamp(col0, yy, xx)
+    phi0 = _clampsamp(phi, yy, xx)
+    acc = own * PICK_OWN
+    wsum = np.full((lh, lw), PICK_OWN, np.float32)
+    for i in range(1, 5):
+        t = i * 0.25
+        sy = yy - dy * (pick * t)
+        sx = xx - dx * (pick * t)
+        wt = np.clip((_clampsamp(phi, sy, sx) - phi0) * PICK_GAIN, 0.0, 1.0) ** 2
+        acc = acc + _clampsamp(col0, sy, sx) * wt[..., None]
+        wsum = wsum + wt
+    col = (acc / wsum[..., None]).astype(np.float32)
     score = prio.copy()                  # score = 優先度 - tie * 伝播距離
 
     for _ in range(n):

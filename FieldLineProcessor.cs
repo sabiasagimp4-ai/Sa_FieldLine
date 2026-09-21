@@ -252,6 +252,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         stretchInit.SetInput(0, advectOut, true);
         stretchInit.SetInput(1, radialOut, true);
         stretchInit.SetInput(2, prioCrop.Output, true);
+        stretchInit.SetInput(3, fieldBOut, true);
 
         composite.SetInput(0, advectOut, true);
 
@@ -470,13 +471,18 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
             FieldLineGraph.SetBlurSigma(prioBlur.Effect, (float)stretchWidth);
             FieldLineGraph.SetCropRect(prioCrop.Effect, rect);
 
-            stretchInit.C0 = new Vector4((float)pick, radialScale, 0f, 0f);
+            // conf は輪郭のスケールぶん太い帯になるので、色を拾う探索距離は
+            // その帯を跨げるだけ要る。足りないと帯の外縁が背景色を運ぶ種になり、
+            // 本来の輪郭色を塞いで帯が眠くなる。
+            var edgeSigma = BaseSigma * Math.Pow(2d, mu);
+            var pickRange = Math.Max(pick, 2d * edgeSigma);
+            stretchInit.C0 = new Vector4((float)pickRange, radialScale, 0f, 0f);
             stretchInit.C2 = rect;
             stretchInit.C3 = fieldRect;
             // 伝播は 100 パス近く連なるので、入力は「一部を広げて」ではなく「全体」を要求する。
             // 広げる形だと、D2D がタイルに分けて描いた時に上流の連鎖が
             // タイルごとに描き直され、深さぶんだけ無駄が積み上がる。
-            stretchInit.C5 = new Vector4(0f, 0f, 0f, 3f);
+            stretchInit.C5 = new Vector4(0f, 0f, 0f, 11f);   // 入力 0,1,3 は全体が要る
 
             var stepC0 = new Vector4((float)stepPx, radialScale, (float)tie, 0f);
             var stepC5 = new Vector4(0f, 0f, 0f, 3f);

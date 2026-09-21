@@ -32,6 +32,10 @@ static const float K_CURL = 0.014;
 static const float K_TURB = 0.08;
 static const float K_GRAD = 0.30;
 
+// 色を拾う時、φ の登り幅に対する重みの立ち上がりと、登り先が無い時の基礎重み。
+static const float PICK_GAIN = 6.0;
+static const float PICK_OWN  = 0.02;
+
 // 符号つきの値を [0,1] に折り込む。中間バッファが 8bit しか取れない環境でも
 // 法線や curl が潰れないようにするための保険で、アフィン変換なので
 // ガウスぼかしや箱平均（どちらも重み和が 1 の平均）を通しても壊れない。

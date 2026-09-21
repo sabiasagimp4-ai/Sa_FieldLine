@@ -246,6 +246,16 @@ def _sample(img: np.ndarray, y: np.ndarray, x: np.ndarray, mode: str = "reflect"
 
 
 
+def _pick_range(p: Params) -> float:
+    """色を拾うために上流を探す距離 [px]。
+
+    conf は輪郭のスケール（= detail_scale が決めるオクターブの σ）ぶん太い帯になる。
+    その帯を跨げない距離では、帯の外縁が背景色を運ぶ種になってしまう。
+    """
+    mu = (1.0 - float(np.clip(p.detail_scale, 0.0, 1.0))) * (p.octaves - 1)
+    return max(p.stretch_pick, 2.0 * p.base_sigma * (2.0 ** mu))
+
+
 def _step_count(p: Params, length: float) -> int:
     """歩幅が px 単位で一定になるようにステップ数を決める（ジャギー防止）。"""
     return int(np.clip(round(abs(length) / max(p.step_px, 0.2)), 8, p.steps))
@@ -456,11 +466,31 @@ def flow_flood(fieldset, lin: np.ndarray, p: Params, length_scale: float = 1.0):
     n = _step_count(p, total)
     hstep = total / n
 
-    # 輪郭ちょうどは線画の色なので、少し内側（上流）から色を拾う
-    if p.stretch_pick > 1e-3:
-        col = _sample(lin, yy - dy * p.stretch_pick, xx - dx * p.stretch_pick)
-    else:
-        col = lin.copy()
+    # 輪郭ちょうどは線画の色なので、上流（面の側）から色を拾う。
+    #
+    # 固定距離で拾ってはいけない。conf は輪郭のスケールぶん太い帯になるので、
+    # 帯の外縁にいる画素は数 px 上流を見ても背景のままで、
+    # 「背景色を運ぶ強い種」になって本来の輪郭色を塞ぐ。帯が眠くなる原因はこれ。
+    # 代わりに φ（輪郭密度）の尾根まで登り、登り切った所の色を拾う。
+    # すでに尾根にいる画素（＝構造の内側）は自分の色のままになるので、
+    # 文字や線画の面が背景色で塗り潰されない。
+    # argmax で 1 点を選ぶと、隣接画素で選ばれる点が切り替わって細かい縞が出る。
+    # 「自分より φ が高いぶん」で重み付けした平均にすると空間的に滑らかになり、
+    # なおかつ尾根の色が支配的になる。登り先が無ければ自分の色のまま。
+    pick = _pick_range(p)
+    phi = fieldset["phi"]
+    own = _sample(lin, yy, xx)
+    phi0 = _sample(phi, yy, xx)
+    acc = own * 0.02
+    wsum = np.full((h, w), 0.02, np.float32)
+    for i in range(1, 5):
+        t = i * 0.25
+        sy = yy - dy * (pick * t)
+        sx = xx - dx * (pick * t)
+        wt = np.clip((_sample(phi, sy, sx) - phi0) * 6.0, 0.0, 1.0) ** 2
+        acc = acc + _sample(lin, sy, sx) * wt[..., None]
+        wsum = wsum + wt
+    col = (acc / wsum[..., None]).astype(np.float32)
 
     src = prio.copy()                      # 受け継いだ輪郭の強さ
     dist = np.zeros((h, w), np.float32)    # そこから伝播してきた距離

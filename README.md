@@ -83,17 +83,21 @@ sh tests/hlsl_syntax_check.sh              # HLSL の構文（glslang + D2D ヘ�
 
 | | |
 | --- | --- |
-| ![original](docs/samples/text/20_text_original.jpg) 元画像 | ![magnetic](docs/samples/text/21_text_magnetic.jpg) 磁力線（回転 100%） |
-| ![electric](docs/samples/text/22_text_electric.jpg) 電気力線（反発） | ![flow](docs/samples/text/23_text_flow.jpg) 変位＋発光＋色収差 |
-| ![pull](docs/samples/text/25_text_pull.jpg) 文字の色を引き伸ばす | ![pullglow](docs/samples/text/26_text_pull_glow.jpg) 引き伸ばし＋発光＋力線 |
+| ![original](docs/samples/text/20_text_original.jpg) 元画像 | ![magnetic](docs/samples/text/21_text_magnetic.jpg) 磁力線（回転 100% ＋ 力線） |
+| ![electric](docs/samples/text/22_text_electric.jpg) 電気力線（反発 ＋ 力線） | ![flow](docs/samples/text/23_text_flow.jpg) 変位＋色収差 |
+| ![pull](docs/samples/text/25_text_pull.jpg) 文字の色を引き伸ばす | ![pulllines](docs/samples/text/26_text_pull_lines.jpg) 引き伸ばし＋力線（場を分ける） |
 
 文字に掛けるときは `強さ` を小さく（10% 前後）して、
 字そのものは残したまま周囲に力線を出すのが扱いやすい。
 引き伸ばしは `強さ 0` でも成立する（変位を使わず、輪郭の色だけを外へ運ぶ）。
 
-> 文字のように**輪郭がまばらな素材**は、写真とは統計が違う。
-> 正規化を「写真で測った絶対値」にしていると効果が丸ごと沈むので、
-> `K_MAG` / `K_PHI` / `K_COH` はすべて**比**（percentile ÷ 全画面 RMS）で持っている。
+> 文字のように**輪郭がまばらな素材**は、写真とは統計が違う。ここで 2 つ踏んだ。
+>
+> - 正規化を「写真で測った絶対値」にしていると効果が丸ごと沈む。
+>   `K_MAG` / `K_PHI` / `K_COH` はすべて**比**（percentile ÷ 全画面 RMS）で持つ。
+> - 色を**固定距離**で拾うと、輪郭の太い帯の外縁が背景色を運ぶ種になって帯が眠くなる。
+>   φ（輪郭密度）の尾根まで登って拾う。すでに尾根にいる画素は自分の色のままになるので、
+>   文字の面が背景色で塗り潰されない。
 
 ---
 
