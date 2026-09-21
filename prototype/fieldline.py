@@ -72,6 +72,9 @@ class Params:
                                    # >0 にすると平坦な面まで丸ごとドラッグされる
                                    # （＝「画像を引き伸ばす」側の挙動）。
                                    # 端の色だけを引き出したいときは 0 のまま。
+    stretch_radial: bool = True    # 引き伸ばし専用に「輪郭から放射」する場を使う。
+                                   # 変位側が Swirl でも引き伸ばしは放射のままになる
+    stretch_swirl: float = 0.0     # 放射場をひねる。0 で真っ直ぐ外向き
     stretch_pick: float = 3.0      # 色を拾う位置を、輪郭からさらに上流へ [px]
                                    # ずらす。線画の黒ではなく面の色を引き出す。
     stretch_gate: float = 0.35     # これ未満しか輪郭を掴めなかった画素は元のまま。
@@ -380,6 +383,33 @@ def edge_streamer(fieldset, lin: np.ndarray, p: Params, sign: float = -1.0,
     return col.astype(np.float32), cover.astype(np.float32)
 
 
+def radial_fieldset(fieldset, p: Params):
+    """引き伸ばし用に、輪郭から外向きに放射する場を作る。
+
+    φ（エッジ密度のポテンシャル）の勾配は輪郭へ向かう。その逆が外向き。
+    勾配場なので回転成分を持たず、電気力線のように素直に放射する。
+    流線を「さかのぼる」と必ず輪郭に着くので、端の色を拾える。
+    """
+    phi = fieldset["phi"]
+    gs = max(p.radius * 0.10, 2.0)
+    gx = gaussian_filter(phi, gs, order=[0, 1], mode="reflect")
+    gy = gaussian_filter(phi, gs, order=[1, 0], mode="reflect")
+
+    vx, vy = -gx, -gy                       # 外向き
+    if abs(p.stretch_swirl) > 1e-4:
+        th = p.stretch_swirl * (np.pi / 2.0)
+        c, sn = np.cos(th), np.sin(th)
+        vx, vy = c * vx - sn * vy, sn * vx + c * vy
+
+    m = np.hypot(vx, vy) + EPS
+    fs = dict(fieldset)
+    fs["dx"] = (vx / m).astype(np.float32)
+    fs["dy"] = (vy / m).astype(np.float32)
+    # 減衰させないので歩幅はゲートしない
+    fs["flow"] = np.ones_like(fs["dx"])
+    return fs
+
+
 # ------------------------------------------- 5c. flow hold (引き伸ばし本体)
 def _priority_map(lin: np.ndarray, fieldset, mode: str) -> np.ndarray:
     """流線上で「どのサンプルを採用するか」を決める優先度。"""
@@ -499,9 +529,10 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
 
     # --- 発展: 流線に沿って色を帯のまま引き伸ばす ---
     if p.stretch > 1e-4:
-        st, q = flow_hold(fieldset, out, p, sign=-1.0)
+        sfs = radial_fieldset(fieldset, p) if p.stretch_radial else fieldset
+        st, q = flow_hold(sfs, out, p, sign=-1.0)
         if p.bidirectional:
-            st2, q2 = flow_hold(fieldset, out, p, sign=1.0)
+            st2, q2 = flow_hold(sfs, out, p, sign=1.0)
             take = (q2 > q)[..., None]
             st = np.where(take, st2, st)
             q = np.maximum(q, q2)
