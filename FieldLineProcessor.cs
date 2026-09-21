@@ -40,10 +40,13 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     /// <summary>1x1 まで潰すのに要る段数。4K（1/4 で 960px）でも 10 段で足りる。</summary>
     const int ReduceLevels = 12;
     /// <summary>
-    /// 伝播パスの上限。1 パスにつき等倍の RGBA16F が 1 枚要るので、
+    /// 伝播パスの上限。UI の「ステップ数」の上限と同じにしてある。
+    /// 流線の長さの上限 600px で「600 ÷ 1.5px = 400 パス」要るので、
+    /// ここを下げると長い流線で説明どおりに上げられなくなる。
+    /// 1 パスにつき等倍の RGBA16F が 1 枚要るので、
     /// D2D が中間バッファを使い回さない場合はここがメモリの上限になる。
     /// </summary>
-    const int MaxStretchPasses = 256;
+    const int MaxStretchPasses = 512;
 
     const float BaseSigma = 1.1f;
     const float Align = 0.65f;
@@ -319,7 +322,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         var shade = Math.Clamp(item.Shade.GetValue(frame, duration, fps) / 100d, -4d, 4d);
         var chroma = Math.Clamp(item.Chroma.GetValue(frame, duration, fps) / 100d, 0d, 1d);
         var preserve = Math.Clamp(item.PreserveOriginal.GetValue(frame, duration, fps) / 100d, 0d, 1d);
-        var maxSteps = Math.Clamp(item.Steps, 8, 256);
+        var maxSteps = Math.Clamp(item.Steps, 8, MaxStretchPasses);
 
         bypass = false;
 

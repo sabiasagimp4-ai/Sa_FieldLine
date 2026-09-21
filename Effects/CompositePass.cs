@@ -12,15 +12,10 @@ internal sealed class CompositePass : D2D1CustomShaderEffectBase
 {
     public CompositePass(IGraphicsDevicesAndContext devices) : base(Create<Impl>(devices))
     {
-        // 中間バッファを 16bit float にする。既定の 8bit では符号つきの値が潰れる。
-        // 設定できない環境では、上流の組み込みエフェクトから継承されるのに任せる。
-        try
-        {
-            SetValue(FieldLineGraph.PropertyPrecision, FieldLineGraph.Precision16Float);
-        }
-        catch
-        {
-        }
+        // 中間バッファの精度はここでは触らない。標準プロパティ D2D1_PROPERTY_PRECISION は
+        // 列挙型で、YMM4 の SetValue(int, int) から渡すと型が合わず弾かれる。
+        // 代わりに上流の組み込みエフェクトで 16bit float に上げてあり、
+        // カスタムエフェクトは入力の精度を継ぐのでそのまま伝わる。
     }
 
     public Vector4 C0 { set => SetValue((int)Impl.Properties.C0, value); }
