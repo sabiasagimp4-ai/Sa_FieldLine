@@ -37,6 +37,7 @@ internal static class FieldLineGraph
 
     // d2d1effects.h : D2D1_CROP_PROP
     const int CropRect = 0;
+    const int CropBorderMode = 1;
 
     // D2D1_BORDER_MODE_HARD : ぼかしても矩形を広げない（広がると座標の対応が崩れる）
     const int BorderModeHard = 1;
@@ -103,6 +104,8 @@ internal static class FieldLineGraph
     public static ID2D1Effect CreateCrop(ID2D1DeviceContext context)
     {
         var e = new Vortice.Direct2D1.Effects.Crop(context);
+        // Soft だと矩形の縁が半透明になる。場に透明の縁ができると流線が壊れる。
+        e.SetValue(CropBorderMode, BorderModeHard);
         return e.Float16();
     }
 

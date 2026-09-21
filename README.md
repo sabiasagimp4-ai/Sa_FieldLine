@@ -18,8 +18,14 @@
 | リファレンス実装 | `prototype/fieldline.py` | 挙動の基準。percentile 正規化など GPU では使えない演算を含む |
 | GPU 相当シミュレーション | `prototype/gpu_sim.py` | **HLSL はこのファイルを 1:1 で移植したもの。** 数式を変えるときはまずここを直す |
 
-`tests/gpu_pipeline_regression.py` がリファレンスと GPU 相当の差を検証する
-（Windows も YMM4 も不要）。設計の詳細は [docs/YMM4_IMPLEMENTATION.md](docs/YMM4_IMPLEMENTATION.md)。
+Windows も YMM4 も無しで検証できるものを 2 つ用意してある。
+
+```bash
+python3 tests/gpu_pipeline_regression.py   # リファレンスと GPU 相当の差
+sh tests/hlsl_syntax_check.sh              # HLSL の構文（glslang + D2D ヘルパのスタブ）
+```
+
+設計の詳細は [docs/YMM4_IMPLEMENTATION.md](docs/YMM4_IMPLEMENTATION.md)。
 
 ---
 
@@ -181,6 +187,19 @@ dotnet build .\SaFieldLine.csproj -c Release `
 
 プロトタイプの `stretch_mode` / `smear` / `posterize` / `streamer` /
 `stretch_jitter` は UI には出していない（用途が限定的なため）。
+
+### 負荷
+
+場は 1/4 解像度で作るので、**影響範囲を上げてもほとんど重くならない**。
+効くのは流線の長さとステップ数で、順に重いのは
+
+1. **力線を描く** — 前後 2 方向の LIC。等倍で最大 192 ステップ走る
+2. **発光** — 前後 2 方向。流線の長さの 2.2 倍を走る
+3. **引き伸ばし** — 1/2 解像度なので 1 パスは安いが、長さに比例してパスが増える
+4. 変位 — 等倍だが 1 ステップにつきテクスチャ 1 回読むだけ
+
+重いときは **ステップ数**を下げる。長い流線だとジャギが出やすくなる代わりに、
+ほぼ線形に軽くなる。
 
 ---
 

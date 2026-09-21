@@ -36,6 +36,7 @@ K_PHI = 1.95           # p98(phi)  / rms(phi)
 K_COH = 0.95           # p99(|v|)。v は phi 正規化済みなので定数でよい
 K_CURL = 0.014         # p97(curl)
 K_TURB = 0.08          # p88(turb) より大きめ。smoothness を上げた時だけ緩む
+LINE_SEED_EDGE = 0.7   # 力線の種を輪郭近くへ寄せる度合い
 K_GRAD = 0.30          # p99(|grad phi| * gs / phi_scale)
 
 # 較正用に build_field が途中経過を残す（calibrate_gpu.py が読む）
@@ -422,6 +423,129 @@ def render(rgb, p: GpuParams, F=None):
         k = (covered.astype(np.float32) * p.stretch)[..., None]
         out = out * (1.0 - k) + st * k
 
+    out = post(out, F, p, rgb)
+    return out, F
+
+
+# ==========================================================  P8 : 発展要素
+def _frac(x):
+    return x - np.floor(x)
+
+
+def _hash21(x, y):
+    """Post.hlsl の saHash と同じ。"""
+    px = _frac(x * 0.1031)
+    py = _frac(y * 0.1030)
+    d = px * (py + 33.33) + py * (px + 33.33)
+    px = px + d
+    py = py + d
+    return _frac((px + py) * px)
+
+
+def _value_noise(x, y):
+    ix, iy = np.floor(x), np.floor(y)
+    fx, fy = x - ix, y - iy
+    fx = fx * fx * (3.0 - 2.0 * fx)
+    fy = fy * fy * (3.0 - 2.0 * fy)
+    a = _hash21(ix, iy)
+    b = _hash21(ix + 1.0, iy)
+    c = _hash21(ix, iy + 1.0)
+    d = _hash21(ix + 1.0, iy + 1.0)
+    return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy
+
+
+def _line_noise(px, py, phi, grain, seed_edge):
+    cell = max(2.0 * grain, 0.6)
+    z = (_value_noise(px / cell, py / cell) - 0.5) / 0.19   # 値ノイズの標準偏差 ~0.19
+    seed = np.clip(phi, 0.0, 1.0) ** 0.7
+    z = z * ((1.0 - seed_edge) + seed_edge * (0.25 + 0.75 * seed))
+    return z * 0.5 + 0.5
+
+
+def _highlight(col, py, px):
+    c = _clampsamp(col, py, px)
+    l = 0.2126 * c[..., 0] + 0.7152 * c[..., 1] + 0.0722 * c[..., 2]
+    return np.clip((l - 0.55) / 0.45, 0.0, 1.0)[..., None] * c
+
+
+def _walk(col, F, p: GpuParams, sgn, n, hstep, mode):
+    """流線に沿って payload を平均する。mode 0 = 発光、1 = 力線(LIC)。"""
+    h, w = col.shape[:2]
+    Q = FIELD_DIV
+    A = F["A"]
+    phiN = d2d_up(F["B"][..., 1], (h, w))
+    yy, xx = _grid((h, w))
+    a0 = _clampsamp(A, yy / Q, xx / Q)
+    dxv = sgn * a0[..., 0]
+    dyv = sgn * a0[..., 1]
+    cx, cy = xx.copy(), yy.copy()
+
+    if mode == 0:
+        acc = _highlight(col, cy, cx)
+        lic = None
+    else:
+        acc = None
+        lic = _line_noise(cx, cy, phiN, p.line_grain, LINE_SEED_EDGE)
+    wsum = np.ones((h, w), np.float32)
+
+    for i in range(n):
+        a = _clampsamp(A, cy / Q, cx / Q)
+        fx = sgn * a[..., 0]
+        fy = sgn * a[..., 1]
+        flip = np.where(fx * dxv + fy * dyv < 0.0, -1.0, 1.0).astype(np.float32)
+        fx *= flip
+        fy *= flip
+        ang = np.arctan2(dxv * fy - dyv * fx, dxv * fx + dyv * fy)
+        turn = p.align * ang + p.curvature * a[..., 3] * hstep * 0.09
+        ct, st = np.cos(turn), np.sin(turn)
+        dxv, dyv = ct * dxv - st * dyv, st * dxv + ct * dyv
+        dn = np.hypot(dxv, dyv) + EPS
+        dxv /= dn
+        dyv /= dn
+        cx = cx + dxv * (hstep * a[..., 2])
+        cy = cy + dyv * (hstep * a[..., 2])
+
+        t = (i + 1) / n
+        wgt = np.float32(0.5 + 0.5 * np.cos(np.pi * t))
+        if mode == 0:
+            acc = acc + _highlight(col, cy, cx) * wgt
+        else:
+            ph = _clampsamp(phiN, cy, cx)
+            lic = lic + _line_noise(cx, cy, ph, p.line_grain, LINE_SEED_EDGE) * wgt
+        wsum = wsum + wgt
+
+    if mode == 0:
+        return acc / wsum[..., None]
+    return lic / wsum
+
+
+def post(col, F, p: GpuParams, original):
+    """Post.hlsl と同じ順序で発光・力線・元画像の混ぜ戻しを掛ける。"""
+    h, w = col.shape[:2]
+    out = col.copy()
+    amp = d2d_up(F["B"][..., 0], (h, w))
+
+    if p.glow > 1e-4:
+        total = p.flow_length * 2.2
+        n = _step_count(total, p.step_px, p.steps)
+        hstep = total / n
+        g = 0.5 * (_walk(out, F, p, -1.0, n, hstep, 0) + _walk(out, F, p, 1.0, n, hstep, 0))
+        g = np.clip(g * (p.glow * 2.0 * amp)[..., None], 0.0, 1.0)
+        out = 1.0 - (1.0 - np.clip(out, 0.0, 1.0)) * (1.0 - g)      # screen
+
+    if p.line_draw > 1e-4:
+        total = max(p.flow_length * 1.8, 34.0)
+        n = int(np.clip(round(total), 8, min(p.steps * 2, 220)))
+        hstep = total / n
+        lic = 0.5 * (_walk(out, F, p, -1.0, n, hstep, 1) + _walk(out, F, p, 1.0, n, hstep, 1))
+        # 局所コントラスト正規化の代わりに、LIC の標準偏差を解析的に出して割る
+        g_eff = max(2.0 * p.line_grain, 0.6)
+        sd = 0.5 * np.sqrt(g_eff / max(total, g_eff)) + 0.030
+        tex = np.clip((lic - 0.5) / sd * 0.30 * p.line_density + 0.5, 0.0, 1.0)
+        t = ((tex - 0.5) * (p.line_draw * amp) * 1.7)[..., None]
+        base = np.clip(out, 0.0, 1.0)
+        out = np.maximum(base + t * (0.35 + 0.65 * (1.0 - np.abs(2.0 * base - 1.0))), 0.0)
+
     if p.preserve_original > 1e-4:
-        out = out * (1.0 - p.preserve_original) + rgb * p.preserve_original
-    return np.clip(out, 0.0, 1.0).astype(np.float32), F
+        out = out * (1.0 - p.preserve_original) + original * p.preserve_original
+    return np.clip(out, 0.0, 1.0).astype(np.float32)

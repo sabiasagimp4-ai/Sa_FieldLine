@@ -49,6 +49,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     readonly IGraphicsDevicesAndContext devices;
     readonly FieldLineEffect item;
     readonly List<IDisposable> owned = [];
+    readonly List<D2D1CustomShaderEffectBase> customPasses = [];
     readonly bool enabled;
 
     readonly LumaPass luma = null!;
@@ -252,7 +253,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
 
     T Keep<T>(T pass, out ID2D1Image output) where T : D2D1CustomShaderEffectBase
     {
-        owned.Add(pass);
+        customPasses.Add(pass);
         output = pass.Output;
         owned.Add(output);
         return pass;
@@ -311,8 +312,10 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         var right = MathF.Ceiling(bounds.Right);
         var bottom = MathF.Ceiling(bounds.Bottom);
         var rect = new Vector4(left, top, right, bottom);
-        var fieldRect = rect / FieldDiv;
-        var stretchRect = rect / StretchDiv;
+        // 縮小後の矩形も整数に丸める。半端な値だと Crop の縁が半透明になり、
+        // そこを読んだ流線が壊れる。
+        var fieldRect = Shrink(rect, FieldDiv);
+        var stretchRect = Shrink(rect, StretchDiv);
 
         // --- 全画面 RMS を取るための縮小段数。1x1 になるところで打ち切る。
         var wq = MathF.Max((right - left) / FieldDiv, 1f);
@@ -496,12 +499,17 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         return effectDescription.DrawDescription;
     }
 
+    /// <summary>矩形を 1/div にして整数へ内側に丸める。</summary>
+    static Vector4 Shrink(Vector4 rect, int div)
+        => new(MathF.Ceiling(rect.X / div), MathF.Ceiling(rect.Y / div),
+               MathF.Floor(rect.Z / div), MathF.Floor(rect.W / div));
+
     void EnsureStretchSteps(int count)
     {
         while (stretchSteps.Count < count)
         {
             var pass = new StretchStepPass(devices);
-            owned.Add(pass);
+            customPasses.Add(pass);
             var image = pass.Output;
             owned.Add(image);
             pass.SetInput(0, stretchSteps.Count == 0 ? initOut : stretchStepOutputs[^1], true);
@@ -539,5 +547,8 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         for (var i = owned.Count - 1; i >= 0; i--)
             owned[i].Dispose();
         owned.Clear();
+        for (var i = customPasses.Count - 1; i >= 0; i--)
+            customPasses[i].Dispose();
+        customPasses.Clear();
     }
 }

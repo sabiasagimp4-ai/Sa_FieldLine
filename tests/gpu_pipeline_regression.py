@@ -61,6 +61,13 @@ CASES = [
     ("pull", dict(strength=0.0, radius=150, flow_length=140, curvature=1.0,
                   smoothness=0.40, edge_threshold=0.25, detail_scale=0.30,
                   stretch=1.0, stretch_gate=0.35, stretch_pick=3.0), 0.12),
+    # 力線は局所コントラスト正規化を解析式に置き換えているので、許容を広めに取る
+    ("lines", dict(strength=0.25, radius=160, flow_length=110, curvature=1.2,
+                   smoothness=0.45, edge_threshold=0.10, detail_scale=0.45,
+                   line_draw=0.6, line_grain=1.5, line_density=1.1, steps=48), 0.16),
+    ("glow", dict(strength=0.45, radius=150, flow_length=90, curvature=1.0,
+                  smoothness=0.40, edge_threshold=0.10, detail_scale=0.5,
+                  glow=0.9, steps=48), 0.14),
 ]
 
 
@@ -69,6 +76,7 @@ def main() -> int:
     failures = []
     for name, kw, tol in CASES:
         ref_kw = dict(kw)
+        ref_kw.pop("steps", None)
         if "stretch" in ref_kw:
             ref_kw.update(stretch_mode="edge", stretch_radial=True, stretch_decay=0.0, step_px=0.9)
         else:
