@@ -36,7 +36,7 @@ internal static class FieldLineGraph
         {
             // Vortice の SetValue はプロパティ番号と値を int として受ける。
             // D2D1 の precision property は負のプロパティ番号を持つため、uint にしない。
-            effect.SetValue((int)Property.Precision, (int)BufferPrecision.PerChannel16Float);
+            effect.SetValue(unchecked((int)Property.Precision), (int)BufferPrecision.PerChannel16Float);
         }
         catch
         {
