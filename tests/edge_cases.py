@@ -84,6 +84,9 @@ def main() -> int:
         if bad:
             failures.append(f"{name}: {', '.join(bad)}")
 
+    if len(CASES) < 10:
+        failures.append(f"ケースが {len(CASES)} 件しかない")
+
     if failures:
         print("FAILED:", "; ".join(failures))
         return 1

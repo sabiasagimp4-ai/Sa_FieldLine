@@ -92,6 +92,9 @@ def main() -> int:
             note = "FAILED"
         print(f"{name:14s} csproj={declared} shader={used} CustomEffect={wired}  {note}")
 
+    if len(shaders) < 10:
+        failures.append(f"シェーダを {len(shaders)} 本しか拾えていない（置き場所が変わった？）")
+
     missing = sorted(set(proj) - set(shaders))
     if missing:
         failures.append(f"csproj にあるがシェーダが無い: {', '.join(missing)}")

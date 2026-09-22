@@ -101,6 +101,9 @@ def main() -> int:
                     failures.append(f"{name}: py={base:g} だが cs={cs[csname]:g}")
         print(f"{name:16s} {'  '.join(cells)}")
 
+    if len(py) < 20:
+        failures.append(f"gpu_sim から定数を {len(py)} 個しか拾えていない（取り出し方が古い）")
+
     for f in failures:
         print("NG", f)
     print(f"constants parity: {'ok' if not failures else 'FAILED'}")

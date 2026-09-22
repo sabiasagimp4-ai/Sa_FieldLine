@@ -90,7 +90,12 @@ def main() -> int:
         out, _ = gs.render(img, gs.GpuParams(**kw))
         diff = float(np.abs(ref - out).mean())
         ok = diff <= tol
-        print(f"{name:10s} meanAbsDiff={diff:.4f} (<= {tol:.2f}) {'ok' if ok else 'FAILED'}")
+        # 許容の 8 割を超えたら、落ちてはいないが「じわじわ寄っている」ので知らせる。
+        # 黙って限界まで近づいて、ある日いきなり落ちるのを防ぐため。
+        note = "ok" if ok else "FAILED"
+        if ok and diff > tol * 0.8:
+            note = f"ok（許容の {diff / tol * 100:.0f}%。寄ってきている）"
+        print(f"{name:10s} meanAbsDiff={diff:.4f} (<= {tol:.2f}) {note}")
         if not ok:
             failures.append(name)
 

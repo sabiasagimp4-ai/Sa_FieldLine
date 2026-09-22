@@ -54,6 +54,10 @@ def main() -> int:
     if stray:
         failures.append(f"gpu_sim にしか無いパラメータ: {', '.join(stray)}")
 
+    # プリセットの取り出しに失敗して「0 件 ok」を返すのが一番まずい。
+    if checked < 10:
+        failures.append(f"プリセットを {checked} 件しか拾えていない（取り出し方が古い）")
+
     for f in failures:
         print("NG", f)
     print(f"preset smoke: {checked} 件 {'ok' if not failures else 'FAILED'}")
