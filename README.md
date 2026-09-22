@@ -22,6 +22,7 @@ Windows も YMM4 も無しで検証できるものを 2 つ用意してある。
 
 ```bash
 python3 tests/gpu_pipeline_regression.py   # リファレンスと GPU 相当の差
+python3 tests/edge_cases.py                # 端の条件で NaN が出ないか
 sh tests/hlsl_syntax_check.sh              # HLSL の構文（glslang + D2D ヘルパのスタブ）
 ```
 
@@ -210,13 +211,17 @@ dotnet build .\SaFieldLine.csproj -c Release `
 
 ### 検査
 
-Windows も YMM4 も無い環境で回せる検査が 3 つある。`.github/workflows/check.yml` が
+Windows も YMM4 も無い環境で回せる検査が 7 つある。`.github/workflows/check.yml` が
 push ごとに全部回す。
 
 ```bash
 sudo apt-get install -y glslang-tools dotnet-sdk-10.0
+python3 tests/shader_inputs_check.py # 入力の本数が csproj / シェーダ / C# で一致しているか
+python3 tests/params_wired_check.py  # UI のパラメータが Processor まで繋がっているか
 sh tests/hlsl_syntax_check.sh       # 15 本の HLSL の構文
 sh tests/csharp_compile_check.sh    # C# の型検査（YMM4 はスタブ / Vortice は本物）
+python3 tests/preset_smoke.py       # サンプルのプリセットが今のパラメータ定義で通るか
+python3 tests/edge_cases.py         # 端の条件で NaN が出ないか
 python3 tests/gpu_pipeline_regression.py   # 参照実装とのずれ
 ```
 

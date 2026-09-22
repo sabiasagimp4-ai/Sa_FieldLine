@@ -42,7 +42,7 @@
     <FieldLineShader Include="Shaders\FieldB.hlsl"><Inputs>4</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Radial.hlsl"><Inputs>1</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Advect.hlsl"><Inputs>3</Inputs></FieldLineShader>
-    <FieldLineShader Include="Shaders\Priority.hlsl"><Inputs>1</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Priority.hlsl"><Inputs>3</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\StretchInit.hlsl"><Inputs>4</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\StretchStep.hlsl"><Inputs>2</Inputs></FieldLineShader>
     <FieldLineShader Include="Shaders\Composite.hlsl"><Inputs>2</Inputs></FieldLineShader>

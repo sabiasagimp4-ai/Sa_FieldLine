@@ -4,6 +4,10 @@ name: Check
 #   1. HLSL の構文（glslang）
 #   2. C# の型検査（YMM4 はスタブ、Vortice は nuget の本物）
 #   3. プロトタイプとの一致（GPU で作れる形に落とした実装が参照実装とずれていないか）
+#   4. サンプル生成スクリプトのプリセットが今のパラメータ定義で通るか
+#   5. 端の条件（輪郭なし・極小・各パラメータの上下限）で NaN が出ないか
+#   6. 入力の本数が csproj / シェーダ / C# で一致しているか
+#   7. UI に出したパラメータが Processor まで繋がっているか
 # 実ビルドは release.yml（windows-latest + fxc + 本物の YMM4）で行います。
 
 on:
@@ -34,6 +38,12 @@ jobs:
       - name: Install glslang
         run: sudo apt-get update && sudo apt-get install -y glslang-tools
 
+      - name: Shader input counts
+        run: python tests/shader_inputs_check.py
+
+      - name: Parameters wired
+        run: python tests/params_wired_check.py
+
       - name: HLSL syntax
         run: sh tests/hlsl_syntax_check.sh
 
@@ -41,7 +51,13 @@ jobs:
         run: sh tests/csharp_compile_check.sh Release
 
       - name: Install Python dependencies
-        run: python -m pip install --upgrade numpy scipy
+        run: python -m pip install --upgrade -r prototype/requirements.txt
+
+      - name: Preset smoke
+        run: python tests/preset_smoke.py
+
+      - name: Edge cases
+        run: python tests/edge_cases.py
 
       - name: Pipeline regression
         run: python tests/gpu_pipeline_regression.py

@@ -74,35 +74,37 @@ PRESETS: list[tuple[str, str, dict]] = [
     ("15_stretch_soft", "引き伸ばし（控えめ）", dict(
         strength=0.0, radius=120, flow_length=90, curvature=1.0, swirl=1.0,
         smoothness=0.30, edge_threshold=0.08, detail_scale=0.55, falloff=0.0, step_px=1.5,
-        stretch=0.7, stretch_mode="contrast", stretch_scale=12, stretch_drag=0.3,
-        stretch_decay=3.0, stretch_jitter=0.6, stretch_jitter_scale=9)),
+        stretch=0.7, stretch_mode="contrast", stretch_scale=12,
+        stretch_decay=0.8, stretch_jitter=0.6)),
 
     ("16_stretch", "引き伸ばし（標準・帯のまま伸びる）", dict(
         strength=0.0, radius=120, flow_length=150, curvature=1.0, swirl=1.0,
         smoothness=0.30, edge_threshold=0.08, detail_scale=0.55, falloff=0.0, step_px=1.5,
-        stretch=1.0, stretch_mode="contrast", stretch_scale=16, stretch_drag=0.3,
-        stretch_decay=3.0, stretch_jitter=0.6, stretch_jitter_scale=9)),
+        stretch=1.0, stretch_mode="contrast", stretch_scale=16,
+        stretch_decay=0.8, stretch_jitter=0.6)),
 
     ("17_stretch_mosh", "引き伸ばし＋グリッチ（粗い歩幅・色収差・階調丸め）", dict(
         strength=0.0, radius=120, flow_length=150, curvature=1.0, swirl=1.0,
         smoothness=0.30, edge_threshold=0.08, detail_scale=0.55, falloff=0.0, step_px=7.0,
-        stretch=1.0, stretch_mode="contrast", stretch_scale=16, stretch_drag=0.3,
-        stretch_decay=2.0, stretch_jitter=0.5, stretch_jitter_scale=9,
+        stretch=1.0, stretch_mode="contrast", stretch_scale=16,
+        stretch_decay=0.6, stretch_jitter=0.5,
         chroma=0.9, posterize=14)),
 
     ("18_pull_near", "端の色を引き伸ばす（近い / 元が残る）", dict(
         strength=0.0, radius=150, flow_length=60, curvature=1.0,
         smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=0.9,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
+        stretch_decay=0.6, stretch_gate=0.35, stretch_pick=3.0)),
 
-    ("19_pull", "端の色を引き伸ばす（標準）", dict(
+    ("19_pull", "端の色を引き伸ばす（標準 / 筆の毛あり）", dict(
         strength=0.0, radius=150, flow_length=140, curvature=1.0,
         smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=0.9,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
+        stretch_decay=0.75, stretch_jitter=0.55, stretch_gate=0.35, stretch_pick=3.0)),
 
-    ("20_pull_far", "端の色を引き伸ばす（遠い / ほぼ全面が塗り替わる）", dict(
+    # 「近さを優先」を 0 にした比較用。塗る範囲が被写体を中心にした円盤になり、
+    # 放射の束＝集中線になるのが分かる。
+    ("20_pull_far", "端の色を引き伸ばす（近さを優先 0 / 集中線になる例）", dict(
         strength=0.0, radius=150, flow_length=280, curvature=1.0,
         smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=0.9,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
@@ -113,7 +115,7 @@ PRESETS: list[tuple[str, str, dict]] = [
         smoothness=0.40, edge_threshold=0.25, detail_scale=0.30, step_px=1.25,
         line_draw=0.35, line_grain=1.6,
         stretch=1.0, stretch_mode="edge", stretch_radial=True,
-        stretch_decay=0.0, stretch_gate=0.35, stretch_pick=3.0)),
+        stretch_decay=0.6, stretch_gate=0.35, stretch_pick=3.0)),
 
     ("14_preserve", "Preserve Original 0.5（強い設定を半分残す）", dict(
         strength=1.0, radius=160, flow_length=170, curvature=2.0, swirl=0.35,

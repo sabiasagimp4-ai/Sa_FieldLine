@@ -340,6 +340,8 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         var stretchWidth = Math.Clamp(item.StretchWidth.GetValue(frame, duration, fps), 0d, 256d);
         var pick = Math.Clamp(item.StretchPick.GetValue(frame, duration, fps), 0d, 128d);
         var stretchSwirl = Math.Clamp(item.StretchSwirl.GetValue(frame, duration, fps) / 100d, -1d, 1d);
+        var stretchDecay = Math.Clamp(item.StretchDecay.GetValue(frame, duration, fps) / 100d, 0d, 1d);
+        var stretchJitter = Math.Clamp(item.StretchJitter.GetValue(frame, duration, fps) / 100d, 0d, 1d);
         var lineDraw = Math.Clamp(item.LineDraw.GetValue(frame, duration, fps) / 100d, 0d, 1d);
         var lineGrain = Math.Clamp(item.LineGrain.GetValue(frame, duration, fps), 0.1d, 64d);
         var lineDensity = Math.Clamp(item.LineDensity.GetValue(frame, duration, fps) / 100d, 0d, 10d);
@@ -369,6 +371,7 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
             magNorm.Effect.SetInput(0, magReduce[levels - 1].Output, true);
             phiNorm.Effect.SetInput(0, phiReduce[levels - 1].Output, true);
             vNorm.Effect.SetInput(0, vReduce[levels - 1].Output, true);
+            cmeanNorm.Effect.SetInput(0, cmeanReduce[levels - 1].Output, true);
             wiredReduceLevels = levels;
         }
 
@@ -494,8 +497,10 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
 
             var stepPx = flowLength / passes;
             var radialScale = 1f / FieldDiv;
-            // score = 優先度 - tie * 距離。1 歩ぶんのペナルティは tie(=0.03/total) * stepPx。
-            var tie = 0.03d / passes;
+            // score = 優先度 - tie * 距離。TieBase は「同点なら近い輪郭を採る」ための最小値で、
+            // 「近さを優先」を上げると距離の項が効いて、弱い輪郭ほど手前で止まる。
+            // 0 のままだとどの流線も流線の長さいっぱいまで届き、塗った範囲が円盤になる。
+            var tie = (TieBase + stretchDecay * (1d - gate)) / passes;
 
             FieldLineGraph.SetBlurSigma(prioBlur.Effect, (float)stretchWidth);
             FieldLineGraph.SetCropRect(prioCrop.Effect, rect);
@@ -505,6 +510,14 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
             // 本来の輪郭色を塞いで帯が眠くなる。
             var edgeSigma = BaseSigma * Math.Pow(2d, mu);
             var pickRange = Math.Max(pick, 2d * edgeSigma);
+
+            // 優先度に使う「輪郭の強さ」を輪郭の帯の幅で均す。ここを掛けないと
+            // 画素ごとの強さのまま競って、櫛状の縞が戻る。
+            FieldLineGraph.SetBlurSigma(confPrioBlur.Effect, (float)(PrioSmooth * pickRange * 0.5d));
+            FieldLineGraph.SetCropRect(confPrioCrop.Effect, rect);
+            // 毛の粒は流線の長さに比例させる（長い流線ほど太い毛）。
+            priority.C0 = new Vector4((float)stretchJitter,
+                                      (float)Math.Max(flowLength * 0.08d, 4d), 0f, 0f);
             stretchInit.C0 = new Vector4((float)pickRange, radialScale, 0f, 0f);
             stretchInit.C2 = rect;
             stretchInit.C3 = fieldRect;

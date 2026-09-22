@@ -462,7 +462,9 @@ def _priority_map(lin: np.ndarray, fieldset, mode: str, prm: Params) -> np.ndarr
         # 正規化の係数が約分されて消えるので、実装どうしの差が出ない。
         conf = fieldset["conf"]
         sg = PRIO_SMOOTH * _pick_range(prm) * 0.5
-        mc = fieldset["mag_n"] * conf
+        # gpu_sim / Confidence.hlsl と同じく 1/4 に縮めて [0,1] に収める。
+        # 比で使うので倍率は約分されて消える。
+        mc = np.clip(fieldset["mag_n"] * 0.25, 0.0, 1.0) * conf
         region = (gaussian_filter(mc, sg, mode="reflect")
                   / np.maximum(gaussian_filter(conf, sg, mode="reflect"), 1e-4))
         st = region / max(float(mc.mean()) / max(float(conf.mean()), 1e-4), 1e-4)

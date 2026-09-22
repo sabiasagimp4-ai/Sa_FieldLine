@@ -20,7 +20,16 @@ sed -i 's|#include <d2d1effecthelpers.hlsli>|#include "d2d1effecthelpers.hlsli"|
 cd "$work"
 status=0
 for f in *.hlsl; do
-  out=$(glslangValidator -D -V -S frag -e main -I. -o /dev/null "$f" 2>&1 | grep -v -E "^$f\$|^\$" || true)
+  # 入力の本数は csproj（実ビルドで fxc に渡すのと同じ値）から取る。
+  # スタブがその本数だけ入力を宣言するので、番号がはみ出していればここで落ちる。
+  name=${f%.hlsl}
+  n=$(sed -n "s|.*Shaders.$name\.hlsl\"><Inputs>\([0-9]*\)</Inputs>.*|\1|p" "$root/SaFieldLine.csproj")
+  if [ -z "$n" ]; then
+    printf '=== %s ===\n%s\n' "$f" "csproj に <Inputs> がありません"
+    status=1
+    continue
+  fi
+  out=$(glslangValidator -D -V -S frag -e main "-DD2D_INPUT_COUNT=$n" -I. -o /dev/null "$f" 2>&1 | grep -v -E "^$f\$|^\$" || true)
   if [ -n "$out" ]; then
     printf '=== %s ===\n%s\n' "$f" "$out"
     status=1

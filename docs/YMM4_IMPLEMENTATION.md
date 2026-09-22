@@ -249,13 +249,29 @@ Sa_chromablur と同じく、**入力の格納値のまま**扱う（sRGB↔リ�
 
 ## 検査できた所
 
-Windows と YMM4 が無くても、次の 3 つは自動で回せる（`.github/workflows/check.yml`）。
+Windows と YMM4 が無くても、次の 7 つは自動で回せる（`.github/workflows/check.yml`）。
 
 | 検査 | 何を見るか |
 | --- | --- |
+| `tests/shader_inputs_check.py` | 入力の本数が csproj / シェーダ / `[CustomEffect(n)]` で一致しているか |
+| `tests/params_wired_check.py` | UI に出したパラメータが Processor まで繋がっているか |
 | `tests/hlsl_syntax_check.sh` | 15 本の HLSL を glslang の HLSL フロントエンドに通す |
 | `tests/csharp_compile_check.sh` | YMM4 をスタブに差し替えて C# を型検査する。Vortice は nuget の本物 |
+| `tests/preset_smoke.py` | サンプル生成スクリプトのプリセットが今のパラメータ定義で通るか |
+| `tests/edge_cases.py` | 輪郭なし・極小・各パラメータの上下限で NaN や範囲外が出ないか |
 | `tests/gpu_pipeline_regression.py` | GPU で作れる形に落とした実装が参照実装とずれていないか |
+
+後ろの 4 つは、**コンパイルが通るのに壊れている**類の事故を実際に踏んで足したもの。
+
+- `Priority` を 1 入力から 3 入力に増やした時、csproj の `D2D_INPUT_COUNT` を 1 のまま
+  置いていた。構文チェックのスタブが入力を 6 本決め打ちで宣言していたので素通りし、
+  実 fxc の走る Windows ビルドで初めて落ちる状態だった。スタブを
+  `D2D_INPUT_COUNT` の本数だけ宣言する形に直し、3 か所の突き合わせも足した。
+- 「近さを優先」「筆の毛」を UI に足したのに、`FieldLineProcessor` 側の適用が
+  丸ごと抜けていた。C# としては何のエラーも出ない（プロパティを読まないだけ）ので、
+  型検査では絶対に見つからない。
+- `Params` から使われていないフィールドを消した時、サンプル生成スクリプトが
+  そのフィールドを渡したままで 3 プリセットが `TypeError` になっていた。
 
 C# は `TreatWarningsAsErrors` 込みで Debug / Release とも警告 0 で通る。
 `ShaderResourceLoader.Get(...)` の名前が埋め込んだ `.cso` の論理名と一致することも見ている。
