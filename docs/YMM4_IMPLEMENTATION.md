@@ -254,7 +254,7 @@ Sa_chromablur と同じく、**入力の格納値のまま**扱う（sRGB↔リ�
 
 ## 検査できた所
 
-Windows と YMM4 が無くても、次の 9 つは自動で回せる（`.github/workflows/check.yml`）。
+Windows と YMM4 が無くても、次の 10 個は自動で回せる（`.github/workflows/check.yml`）。
 
 | 検査 | 何を見るか |
 | --- | --- |
@@ -264,11 +264,12 @@ Windows と YMM4 が無くても、次の 9 つは自動で回せる（`.github/
 | `tests/shader_constants_check.py` | シェーダが読む定数スロット（`c0`〜`c5`）を C# が入れているか |
 | `tests/hlsl_syntax_check.sh` | 15 本の HLSL を glslang の HLSL フロントエンドに通す |
 | `tests/csharp_compile_check.sh` | YMM4 をスタブに差し替えて C# を型検査する。Vortice は nuget の本物 |
+| `tests/defaults_parity_check.py` | `GpuParams` の既定値が UI の既定値と揃っているか |
 | `tests/preset_smoke.py` | サンプル生成スクリプトのプリセットが今のパラメータ定義で通るか |
 | `tests/edge_cases.py` | 輪郭なし・極小・各パラメータの上下限で NaN や範囲外が出ないか |
 | `tests/gpu_pipeline_regression.py` | GPU で作れる形に落とした実装が参照実装とずれていないか |
 
-後ろの 6 つは、**コンパイルが通るのに壊れている**類の事故を実際に踏んで足したもの。
+後ろの 7 つは、**コンパイルが通るのに壊れている**類の事故を実際に踏んで足したもの。
 
 - `Priority` を 1 入力から 3 入力に増やした時、csproj の `D2D_INPUT_COUNT` を 1 のまま
   置いていた。構文チェックのスタブが入力を 6 本決め打ちで宣言していたので素通りし、

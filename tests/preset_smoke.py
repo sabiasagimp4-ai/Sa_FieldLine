@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+
+# プロトタイプを import するので、.pyc を残さない。中身を書き換えても
+# 大きさが同じで同じ秒に保存されると古いキャッシュが使われ、
+# 直したはずの値で落ち続ける（実際に踏んだ）。
+sys.dont_write_bytecode = True
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "prototype"))

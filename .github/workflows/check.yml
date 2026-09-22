@@ -10,6 +10,7 @@ name: Check
 #   7. UI に出したパラメータが Processor まで繋がっているか
 #   8. 同じ定数が prototype / HLSL / C# で一致しているか
 #   9. シェーダが読む定数スロットを C# が入れているか
+#  10. プロトタイプの既定値が UI の既定値と揃っているか
 # 実ビルドは release.yml（windows-latest + fxc + 本物の YMM4）で行います。
 
 on:
@@ -60,6 +61,9 @@ jobs:
 
       - name: Install Python dependencies
         run: python -m pip install --upgrade -r prototype/requirements.txt
+
+      - name: Defaults parity
+        run: python tests/defaults_parity_check.py
 
       - name: Preset smoke
         run: python tests/preset_smoke.py

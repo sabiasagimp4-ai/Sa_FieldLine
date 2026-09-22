@@ -138,20 +138,25 @@ def _global_rms(x):
 
 @dataclass
 class GpuParams:
-    strength: float = 1.0
+    """既定値は **プラグインの UI の既定値と揃えてある**（tests/defaults_parity_check.py）。
+
+    引数を何も渡さずに作ったものが、YMM4 でエフェクトを掛けた直後と同じ絵になる。
+    """
+
+    strength: float = 0.60
     radius: float = 150.0
     curvature: float = 1.0
     swirl: float = 0.0
     attract: float = 0.0
     flow_length: float = 140.0
-    edge_threshold: float = 0.25
+    edge_threshold: float = 0.10
     smoothness: float = 0.40
-    detail_scale: float = 0.30
+    detail_scale: float = 0.50
     preserve_original: float = 0.0
 
     stretch: float = 0.0
     stretch_gate: float = 0.35
-    stretch_pick: float = 3.0
+    stretch_pick: float = 4.0
     stretch_scale: float = 0.0
     stretch_swirl: float = 0.0
     stretch_decay: float = 0.6   # 近さの優先。0 だと全部が flow_length まで届いて円盤になる
