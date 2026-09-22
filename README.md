@@ -211,13 +211,14 @@ dotnet build .\SaFieldLine.csproj -c Release `
 
 ### 検査
 
-Windows も YMM4 も無い環境で回せる検査が 7 つある。`.github/workflows/check.yml` が
+Windows も YMM4 も無い環境で回せる検査が 8 つある。`.github/workflows/check.yml` が
 push ごとに全部回す。
 
 ```bash
 sudo apt-get install -y glslang-tools dotnet-sdk-10.0
 python3 tests/shader_inputs_check.py # 入力の本数が csproj / シェーダ / C# で一致しているか
 python3 tests/params_wired_check.py  # UI のパラメータが Processor まで繋がっているか
+python3 tests/constants_parity_check.py  # 同じ定数が prototype / HLSL / C# で一致しているか
 sh tests/hlsl_syntax_check.sh       # 15 本の HLSL の構文
 sh tests/csharp_compile_check.sh    # C# の型検査（YMM4 はスタブ / Vortice は本物）
 python3 tests/preset_smoke.py       # サンプルのプリセットが今のパラメータ定義で通るか
@@ -272,6 +273,9 @@ UI には出していない（用途が限定的なため）。
 
 重いときは **ステップ数**を下げる。ほぼ線形に軽くなるが、
 引き伸ばしは 1 歩が 2px を超えたあたりから櫛状の縞が出はじめる。
+
+引き伸ばしの優先度に要る「輪郭の強さを帯の幅で均したもの」は等倍のぼかし 1 枚、
+画面平均は 1x1 まで縮小する連鎖 1 本で、どちらも伝播のパス数に比べれば誤差の範囲。
 
 ---
 

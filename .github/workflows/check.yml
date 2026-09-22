@@ -8,6 +8,7 @@ name: Check
 #   5. 端の条件（輪郭なし・極小・各パラメータの上下限）で NaN が出ないか
 #   6. 入力の本数が csproj / シェーダ / C# で一致しているか
 #   7. UI に出したパラメータが Processor まで繋がっているか
+#   8. 同じ定数が prototype / HLSL / C# で一致しているか
 # 実ビルドは release.yml（windows-latest + fxc + 本物の YMM4）で行います。
 
 on:
@@ -43,6 +44,9 @@ jobs:
 
       - name: Parameters wired
         run: python tests/params_wired_check.py
+
+      - name: Constants parity
+        run: python tests/constants_parity_check.py
 
       - name: HLSL syntax
         run: sh tests/hlsl_syntax_check.sh

@@ -15,6 +15,11 @@ Windows と YMM4 の無い環境で **C# の型検査だけ** を通すための
 | Vortice（組み込みエフェクト・列挙・`SetValue` の添字の型） | **本物**（nuget の `Vortice.Direct2D1`） |
 | YMM4 の型（`VideoEffectBase` / `D2D1CustomShaderEffectBase` など） | スタブ |
 | HLSL | されない（`tests/hlsl_syntax_check.sh`） |
+| 入力の本数が csproj / シェーダ / `[CustomEffect(n)]` で揃っているか | されない（`tests/shader_inputs_check.py`） |
+| UI のパラメータが Processor まで繋がっているか | されない（`tests/params_wired_check.py`） |
+
+型検査は「書いた C# が通るか」しか見ない。**書き忘れ**（プロパティを読んでいない、
+入力の本数を増やし忘れた）は素通りするので、その 2 つは別の検査で見ている。
 
 ## シグネチャの根拠
 
