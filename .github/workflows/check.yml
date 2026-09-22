@@ -9,6 +9,7 @@ name: Check
 #   6. 入力の本数が csproj / シェーダ / C# で一致しているか
 #   7. UI に出したパラメータが Processor まで繋がっているか
 #   8. 同じ定数が prototype / HLSL / C# で一致しているか
+#   9. シェーダが読む定数スロットを C# が入れているか
 # 実ビルドは release.yml（windows-latest + fxc + 本物の YMM4）で行います。
 
 on:
@@ -47,6 +48,9 @@ jobs:
 
       - name: Constants parity
         run: python tests/constants_parity_check.py
+
+      - name: Shader constant slots
+        run: python tests/shader_constants_check.py
 
       - name: HLSL syntax
         run: sh tests/hlsl_syntax_check.sh
