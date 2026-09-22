@@ -36,6 +36,13 @@ static const float K_GRAD = 0.30;
 static const float PICK_GAIN = 6.0;
 static const float PICK_OWN  = 0.02;
 
+// 引き伸ばしの優先度。conf は閾値で飽和するので、これだけだとどの輪郭も同点になり、
+// 距離ペナルティで必ず一番外側の輪郭が勝ってしまう（内側の輪郭の色が一歩も外へ出ない）。
+// 輪郭の強さを残すと、強い内側の輪郭が弱い外側の輪郭を押しのけて出てくる。
+// 強さは画面平均との比で持つので、正規化の係数は約分されて消える。
+static const float PRIO_W = 0.65;   // 強さを効かせる割合
+static const float PRIO_K = 0.70;   // 平均の 1/PRIO_K 倍で頭打ち
+
 // 符号つきの値を [0,1] に折り込む。中間バッファが 8bit しか取れない環境でも
 // 法線や curl が潰れないようにするための保険で、アフィン変換なので
 // ガウスぼかしや箱平均（どちらも重み和が 1 の平均）を通しても壊れない。
@@ -45,6 +52,26 @@ static const float PICK_OWN  = 0.02;
 #define SA_DEC4(v) (((v) - 0.5) * 4.0)
 #define SA_ENC6(v) (0.5 + (v) * (1.0 / 6.0))
 #define SA_DEC6(v) (((v) - 0.5) * 6.0)
+
+float saHash(float2 p)
+{
+    p = frac(p * float2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return frac((p.x + p.y) * p.x);
+}
+
+// 値ノイズ。**シーン座標に固定**する。スクリーン座標だと素材が動いた時に模様が泳ぐ。
+float saValueNoise(float2 x)
+{
+    float2 i = floor(x);
+    float2 f = frac(x);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = saHash(i);
+    float b = saHash(i + float2(1.0, 0.0));
+    float c = saHash(i + float2(0.0, 1.0));
+    float d = saHash(i + float2(1.0, 1.0));
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
 
 float2 saRotate(float2 v, float angle)
 {

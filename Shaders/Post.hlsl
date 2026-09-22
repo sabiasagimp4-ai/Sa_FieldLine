@@ -24,26 +24,6 @@
 #define LINE_HSTEP   c5.x
 #define LINE_LENGTH  c5.y
 
-float saHash(float2 p)
-{
-    p = frac(p * float2(0.1031, 0.1030));
-    p += dot(p, p.yx + 33.33);
-    return frac((p.x + p.y) * p.x);
-}
-
-// 値ノイズ。**シーン座標に固定**する。スクリーン座標だと素材が動いた時に線が泳ぐ。
-float saValueNoise(float2 x)
-{
-    float2 i = floor(x);
-    float2 f = frac(x);
-    f = f * f * (3.0 - 2.0 * f);
-    float a = saHash(i);
-    float b = saHash(i + float2(1.0, 0.0));
-    float c = saHash(i + float2(0.0, 1.0));
-    float d = saHash(i + float2(1.0, 1.0));
-    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
-}
-
 // ノイズを輪郭の近くへ寄せて撒くと、砂鉄のように「輪郭から生えて遠くで疎になる」線になる。
 float saLineNoise(float2 q, float phiN, float grain, float seedEdge)
 {

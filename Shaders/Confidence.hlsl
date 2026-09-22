@@ -16,5 +16,8 @@ D2D_PS_ENTRY(main)
     float conf = smoothstep(THRESHOLD, THRESHOLD + knee, magN);
 
     float2 n = SA_DEC2(e.rg);
-    return float4(SA_ENC2(conf * n), conf, 1.0);
+    // .a は空いていたので、輪郭の「強さ」を conf で重み付けして載せておく。
+    // 引き伸ばしの優先度が「この輪郭の強さ」を必要とする（conf は飽和して使えない）。
+    // このテクスチャは拡散側でもぼかされるが、.a は誰も読まないので害はない。
+    return float4(SA_ENC2(conf * n), conf, magN * conf);
 }

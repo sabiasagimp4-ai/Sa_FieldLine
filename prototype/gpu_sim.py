@@ -40,6 +40,10 @@ LINE_SEED_EDGE = 0.7   # 力線の種を輪郭近くへ寄せる度合い
 PICK_GAIN = 6.0        # 色を拾う時、φ の登り幅に対する重みの立ち上がり
 PICK_OWN = 0.02        # 登り先が無い時に自分の色を残すための基礎重み
 K_GRAD = 0.30          # p99(|grad phi| * gs / phi_scale)
+PRIO_W = 0.65          # 優先度に輪郭の強さを効かせる割合（0 だと全部同点になる）
+PRIO_K = 0.70          # 輪郭の強さ（画面平均＝1）-> 優先度の傾き。1.43 倍で頭打ち
+PRIO_SMOOTH = 1.0      # 輪郭の強さを均す幅（輪郭の帯の幅に対する倍率）
+TIE_BASE = 0.03        # 同点の時に近い輪郭を採るための最小の距離ペナルティ
 
 # 較正用に build_field が途中経過を残す（calibrate_gpu.py が読む）
 LAST: dict = {}
@@ -150,6 +154,8 @@ class GpuParams:
     stretch_pick: float = 3.0
     stretch_scale: float = 0.0
     stretch_swirl: float = 0.0
+    stretch_decay: float = 0.6   # 近さの優先。0 だと全部が flow_length まで届いて円盤になる
+    stretch_jitter: float = 0.0  # 筆の毛。流線ごとに届く距離をばらつかせる
 
     glow: float = 0.0
     shade: float = 0.0
@@ -307,6 +313,9 @@ def build_field(rgb, p: GpuParams):
         "B": np.stack([amp, phi_n, res, np.zeros_like(res)], -1).astype(np.float32),
         "R": np.stack([rx, ry], -1).astype(np.float32),               # Radial
         "conf": conf,
+        # 輪郭の「強さ」。conf は閾値で飽和するので、優先度に使うにはこちらが要る。
+        # GPU 側は Confidence の空いていた .a に載せて運ぶ（パスは増えない）。
+        "magn": mag_n,
         "shape": (h, w),
     }
 
@@ -405,14 +414,41 @@ def stretch(colour, F, p: GpuParams):
     m = np.hypot(R[..., 0], R[..., 1]) + EPS
     dx = R[..., 0] / m; dy = R[..., 1] / m
 
-    prio = (conf_s ** 1.2).astype(np.float32)
+    # conf は閾値で飽和するので、これだけを優先度にすると「どの輪郭も同点 1.0」になる。
+    # 同点なら距離ペナルティで必ず一番近い輪郭が勝つので、外側の輪郭が外を丸ごと取り、
+    # 内側の輪郭の色は一歩も外へ出られない（強さを逆転させても出られないことを実測）。
+    # 輪郭の強さを残しておくと、強い内側の輪郭が弱い外側の輪郭を押しのけて出てくる。
+    #
+    # ただし画素ごとの強さをそのまま competition に使うと、隣り合う画素が別の輪郭に
+    # 当たって櫛状の縞が戻る。帯の幅で **conf を重みにした平均** を取り、
+    # 「この輪郭の強さ」にしてから使う。ただ平滑化すると帯の山が削れて
+    # 塗る範囲まで痩せるが、重み付き平均なら山の高さは保たれる。
+    # 強さは **絶対値ではなく画面平均との比** で持つ。絶対値で持つと、正規化の
+    # 係数がずれている素材で強さが丸ごと上下して、届く距離まで変わってしまう。
+    # 比にすれば正規化の係数は約分されて消える（K_MAG などと同じ考え方）。
+    sg = PRIO_SMOOTH * pick_range(p) * 0.5
+    mc = F["magn"] * F["conf"]
+    region = d2d_blur(mc, sg) / np.maximum(d2d_blur(F["conf"], sg), 1e-4)
+    # GPU 側は 1/Q に落とした conf テクスチャから 1x1 まで潰すので、ここも同じ順で潰す。
+    g = d2d_reduce(d2d_down(np.stack([mc, F["conf"]], -1), Q)).reshape(2)
+    strength = region / max(g[0] / max(g[1], 1e-4), 1e-4)
+    prio = (conf_s ** 1.2) * (1.0 - PRIO_W + PRIO_W * np.clip(d2d_down(strength, S) * PRIO_K, 0.0, 1.0))
+    prio = prio.astype(np.float32)
+    if p.stretch_jitter > 1e-4:
+        # 筆の毛。届く距離は優先度で決まるので、優先度をばらつかせると毛先が不揃いになる。
+        # 粒は flow_length に比例させる（長い流線ほど太い毛）。
+        cell = max(p.flow_length * 0.08, 4.0) / S
+        nz = _value_noise(xx / cell, yy / cell)
+        prio = (prio * (1.0 - p.stretch_jitter * nz)).astype(np.float32)
     if p.stretch_scale > 0.3:
         prio = d2d_blur(prio, p.stretch_scale / S)
 
     total_px = p.flow_length
     n = _step_count(total_px, STRETCH_STEP_PX, p.stretch_steps)
     hs = (total_px / n) / S              # texel 単位の歩幅
-    tie = 0.03 / max(total_px, 1.0)
+    # decay=0 だと距離の項はほぼ効かず、どの流線も flow_length いっぱいまで届く
+    # （＝塗る範囲が円盤になる）。decay=1 で「優先度 1 の輪郭がちょうど届き切る」。
+    tie = (TIE_BASE + p.stretch_decay * (1.0 - p.stretch_gate)) / max(total_px, 1.0)
 
     # 固定距離で拾ってはいけない。conf は輪郭のスケールぶん太い帯になるので、
     # 帯の外縁にいる画素は数 px 上流を見ても背景のままで、
@@ -459,8 +495,9 @@ def render(rgb, p: GpuParams, F=None):
 
     if p.stretch > 1e-4:
         st, q = stretch(out, F, p)
-        # score = prio - tie*dist なので、gate は tie*total/2 分だけ下げて補正する
-        covered = q >= (p.stretch_gate - 0.015)
+        # score = prio - tie*dist なので、gate は最小ペナルティの半分だけ下げて補正する。
+        # decay のぶんは引かない（引くと decay を上げるほど塗る範囲が広がってしまう）。
+        covered = q >= (p.stretch_gate - TIE_BASE * 0.5)
         k = (covered.astype(np.float32) * p.stretch)[..., None]
         out = out * (1.0 - k) + st * k
 

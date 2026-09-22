@@ -25,7 +25,7 @@ internal sealed class PriorityPass : D2D1CustomShaderEffectBase
     public Vector4 C4 { set => SetValue((int)Impl.Properties.C4, value); }
     public Vector4 C5 { set => SetValue((int)Impl.Properties.C5, value); }
 
-    [CustomEffect(1)]
+    [CustomEffect(3)]
     internal sealed class Impl : D2D1CustomShaderEffectImplBase<Impl>
     {
         Constants constants;

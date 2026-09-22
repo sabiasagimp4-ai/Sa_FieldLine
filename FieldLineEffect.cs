@@ -77,35 +77,43 @@ public sealed class FieldLineEffect : VideoEffectBase
     [AnimationSlider("F1", "%", -100, 100)]
     public Animation StretchSwirl { get; } = new(0, -100, 100);
 
-    [Display(Name = "力線を描く", Description = "場そのものを線として重ねます（砂鉄のような見た目）", Order = 14)]
+    [Display(Name = "近さを優先", Description = "0%だと全部の流線が「流線の長さ」いっぱいまで届き、塗った範囲が円盤になります。上げると弱い輪郭ほど手前で止まり、輪郭の形に沿った厚みになります", Order = 14)]
+    [AnimationSlider("F1", "%", 0, 100)]
+    public Animation StretchDecay { get; } = new(60, 0, 100);
+
+    [Display(Name = "筆の毛", Description = "流線ごとに届く距離をばらつかせ、毛先を不揃いにします。「近さを優先」が 0%だとほとんど効きません", Order = 15)]
+    [AnimationSlider("F1", "%", 0, 100)]
+    public Animation StretchJitter { get; } = new(0, 0, 100);
+
+    [Display(Name = "力線を描く", Description = "場そのものを線として重ねます（砂鉄のような見た目）", Order = 16)]
     [AnimationSlider("F1", "%", 0, 100)]
     public Animation LineDraw { get; } = new(0, 0, 100);
 
-    [Display(Name = "力線の粒", Description = "線の太さ", Order = 15)]
+    [Display(Name = "力線の粒", Description = "線の太さ", Order = 17)]
     [AnimationSlider("F2", "px", 0.3, 8)]
     public Animation LineGrain { get; } = new(1.4, 0.1, 64);
 
-    [Display(Name = "力線の濃さ", Description = "線のコントラスト", Order = 16)]
+    [Display(Name = "力線の濃さ", Description = "線のコントラスト", Order = 18)]
     [AnimationSlider("F1", "%", 0, 300)]
     public Animation LineDensity { get; } = new(100, 0, 1000);
 
-    [Display(Name = "発光", Description = "明るい部分が流線に沿って伸びて光ります", Order = 17)]
+    [Display(Name = "発光", Description = "明るい部分が流線に沿って伸びて光ります", Order = 19)]
     [AnimationSlider("F1", "%", 0, 100)]
     public Animation Glow { get; } = new(0, 0, 400);
 
-    [Display(Name = "明度差", Description = "流線に沿って明暗をつけ、立体感を出します", Order = 18)]
+    [Display(Name = "明度差", Description = "流線に沿って明暗をつけ、立体感を出します", Order = 20)]
     [AnimationSlider("F1", "%", -100, 100)]
     public Animation Shade { get; } = new(0, -400, 400);
 
-    [Display(Name = "色収差", Description = "RGB で流線の長さを変えてずらします", Order = 19)]
+    [Display(Name = "色収差", Description = "RGB で流線の長さを変えてずらします", Order = 21)]
     [AnimationSlider("F1", "%", 0, 100)]
     public Animation Chroma { get; } = new(0, 0, 100);
 
-    [Display(Name = "元画像を残す", Description = "最後に元の映像を混ぜ戻します", Order = 20)]
+    [Display(Name = "元画像を残す", Description = "最後に元の映像を混ぜ戻します", Order = 22)]
     [AnimationSlider("F1", "%", 0, 100)]
     public Animation PreserveOriginal { get; } = new(0, 0, 100);
 
-    [Display(Name = "ステップ数", Description = "流線と引き伸ばしの最大パス数。引き伸ばしは「流線の長さ ÷ 1.5px」だけ要ります。足りないと 1 歩が粗くなり、櫛状の縞が出ます", Order = 21)]
+    [Display(Name = "ステップ数", Description = "流線と引き伸ばしの最大パス数。引き伸ばしは「流線の長さ ÷ 1.5px」だけ要ります。足りないと 1 歩が粗くなり、櫛状の縞が出ます", Order = 23)]
     [Range(8, 512)]
     [DefaultValue(192)]
     [TextBoxSlider("F0", "", 8, 512)]
@@ -119,7 +127,7 @@ public sealed class FieldLineEffect : VideoEffectBase
     protected override IEnumerable<IAnimatable> GetAnimatables() =>
     [
         Strength, Radius, FlowLength, Curvature, Swirl, Attract, EdgeThreshold, Smoothness, DetailScale,
-        Stretch, StretchGate, StretchWidth, StretchPick, StretchSwirl,
+        Stretch, StretchGate, StretchWidth, StretchPick, StretchSwirl, StretchDecay, StretchJitter,
         LineDraw, LineGrain, LineDensity, Glow, Shade, Chroma, PreserveOriginal,
     ];
 }

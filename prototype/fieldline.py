@@ -20,6 +20,12 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 
 EPS = 1e-8
 
+# 引き伸ばしの優先度（gpu_sim.py と同じ値にすること）
+PRIO_W = 0.65          # 優先度に輪郭の強さを効かせる割合（0 だと全部同点になる）
+PRIO_K = 0.70          # 輪郭の強さ（画面平均＝1）-> 優先度の傾き。1.43 倍で頭打ち
+TIE_BASE = 0.03        # 同点の時に近い輪郭を採るための最小の距離ペナルティ
+PRIO_SMOOTH = 1.0      # 優先度を均す幅（輪郭の帯の幅に対する倍率）
+
 
 # ---------------------------------------------------------------- color utils
 def srgb_to_linear(x: np.ndarray) -> np.ndarray:
@@ -65,13 +71,11 @@ class Params:
     smear: float = 0.0             # 流線に沿って色を平均する（方向ボケ）
     stretch: float = 0.0           # 流線に沿って色を「帯のまま」引き伸ばす
     stretch_mode: str = "edge"     # edge / contrast / bright / dark / vivid / far
-    stretch_decay: float = 0.0     # >0 にすると近い輪郭ほど優先される。
-                                   # 0 なら流線上で最も強い輪郭の色が届く
+    stretch_decay: float = 0.6     # 近さの優先。0 なら流線上で最も強い輪郭の色が
+                                   # flow_length いっぱいまで届く（塗る範囲が円盤になる）。
+                                   # 1 で「優先度 1 の輪郭がちょうど届き切る」長さになり、
+                                   # 弱い輪郭ほど手前で止まる
     stretch_scale: float = 0.0     # 優先度マップのぼかし [px]。**ストロークの太さ**
-    stretch_drag: float = 0.0      # 遠いサンプルほど有利にする量。
-                                   # >0 にすると平坦な面まで丸ごとドラッグされる
-                                   # （＝「画像を引き伸ばす」側の挙動）。
-                                   # 端の色だけを引き出したいときは 0 のまま。
     stretch_radial: bool = True    # 引き伸ばし専用に「輪郭から放射」する場を使う。
                                    # 変位側が Swirl でも引き伸ばしは放射のままになる
     stretch_swirl: float = 0.0     # 放射場をひねる。0 で真っ直ぐ外向き
@@ -79,8 +83,8 @@ class Params:
                                    # ずらす。線画の黒ではなく面の色を引き出す。
     stretch_gate: float = 0.35     # これ未満しか輪郭を掴めなかった画素は元のまま。
                                    # 掴めた画素は **完全不透明** で塗り替わる
-    stretch_jitter: float = 0.0    # 流線ごとに長さをばらつかせる（筆の毛）
-    stretch_jitter_scale: float = 6.0  # ばらつきの粒 [px]
+    stretch_jitter: float = 0.0    # 筆の毛。優先度をばらつかせて毛先を不揃いにする。
+                                   # 届く距離は優先度で決まるので stretch_decay と併用する
     posterize: int = 0             # 0で無効。色を階調に丸めてフラットにする
     streamer: float = 0.0          # エッジの色を流線に沿って引き出す（力線そのもの）
     streamer_decay: float = 2.2    # 引き出した色の減衰（大きいほど短い）
@@ -421,11 +425,48 @@ def radial_fieldset(fieldset, p: Params):
 
 
 # ------------------------------------------- 5c. flow hold (引き伸ばし本体)
-def _priority_map(lin: np.ndarray, fieldset, mode: str) -> np.ndarray:
+def _frac(x):
+    return x - np.floor(x)
+
+
+def _hash21(x, y):
+    """gpu_sim._hash21 / FieldLineCommon.hlsli の saHash と同じ。"""
+    px = _frac(x * 0.1031)
+    py = _frac(y * 0.1030)
+    d = px * (py + 33.33) + py * (px + 33.33)
+    return _frac(((px + d) + (py + d)) * (px + d))
+
+
+def _value_noise(x, y):
+    ix, iy = np.floor(x), np.floor(y)
+    fx, fy = x - ix, y - iy
+    fx = fx * fx * (3.0 - 2.0 * fx)
+    fy = fy * fy * (3.0 - 2.0 * fy)
+    a = _hash21(ix, iy)
+    b = _hash21(ix + 1.0, iy)
+    c = _hash21(ix, iy + 1.0)
+    d = _hash21(ix + 1.0, iy + 1.0)
+    return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fy
+
+
+def _priority_map(lin: np.ndarray, fieldset, mode: str, prm: Params) -> np.ndarray:
     """流線上で「どのサンプルを採用するか」を決める優先度。"""
     l = luma(lin)
     if mode == "edge":
-        return fieldset["conf"] ** 1.2
+        # conf は閾値で飽和するので、これだけだと「どの輪郭も同点」になり、
+        # 伝播では必ず一番近い（＝一番外側の）輪郭が勝つ。強さを残すと、
+        # 強い内側の輪郭が弱い外側の輪郭を押しのけて外まで出られる。
+        # 画素ごとの強さのままだと櫛状の縞が戻るので、輪郭の帯の幅で
+        # conf を重みにした平均を取り、「この輪郭の強さ」にしてから使う。
+        # 強さは絶対値ではなく画面平均との比で持つ（gpu_sim と同じ）。
+        # 正規化の係数が約分されて消えるので、実装どうしの差が出ない。
+        conf = fieldset["conf"]
+        sg = PRIO_SMOOTH * _pick_range(prm) * 0.5
+        mc = fieldset["mag_n"] * conf
+        region = (gaussian_filter(mc, sg, mode="reflect")
+                  / np.maximum(gaussian_filter(conf, sg, mode="reflect"), 1e-4))
+        st = region / max(float(mc.mean()) / max(float(conf.mean()), 1e-4), 1e-4)
+        return (conf ** 1.2) * (1.0 - PRIO_W + PRIO_W * np.clip(st * PRIO_K, 0.0, 1.0))
     if mode == "contrast":
         # 局所平均からの外れ具合。明部も暗部も等しく伸びる
         d = np.abs(l - gaussian_filter(l, 6.0, mode="reflect"))
@@ -457,7 +498,13 @@ def flow_flood(fieldset, lin: np.ndarray, p: Params, length_scale: float = 1.0):
 
     dx, dy = fieldset["dx"], fieldset["dy"]
 
-    prio = _priority_map(lin, fieldset, p.stretch_mode)
+    prio = _priority_map(lin, fieldset, p.stretch_mode, p)
+    if p.stretch_jitter > 1e-4:
+        # 筆の毛。届く距離は優先度で決まるので、優先度をばらつかせると毛先が不揃いになる。
+        # 粒は flow_length に比例させる（長い流線ほど太い毛）。
+        cell = max(p.flow_length * 0.08, 4.0)
+        nz = _value_noise(xx / cell, yy / cell)
+        prio = prio * (1.0 - p.stretch_jitter * nz)
     if p.stretch_scale > 0.3:
         prio = gaussian_filter(prio, p.stretch_scale, mode="reflect")
     prio = prio.astype(np.float32)
@@ -495,17 +542,9 @@ def flow_flood(fieldset, lin: np.ndarray, p: Params, length_scale: float = 1.0):
     src = prio.copy()                      # 受け継いだ輪郭の強さ
     dist = np.zeros((h, w), np.float32)    # そこから伝播してきた距離
 
-    if p.stretch_jitter > 1e-4:
-        rng = np.random.default_rng(p.seed + 991)
-        nz = gaussian_filter(rng.random((h, w)).astype(np.float32),
-                             max(p.stretch_jitter_scale, 0.4), mode="reflect")
-        nz = (nz - nz.min()) / (np.ptp(nz) + EPS)
-        reach = total * (1.0 - p.stretch_jitter + p.stretch_jitter * nz * 2.0)
-    else:
-        reach = np.full((h, w), total, np.float32)
-
-    # 同点なら近い輪郭を採る（判定を空間的に安定させるための微小な距離項）
-    tie = 0.03 / max(total, 1.0)
+    # 近さの優先。0 だと距離の項がほぼ効かず、どの流線も flow_length いっぱいまで
+    # 届く（＝塗る範囲が円盤になる）。1 で「優先度 1 の輪郭がちょうど届き切る」。
+    tie = (TIE_BASE + p.stretch_decay * (1.0 - p.stretch_gate)) / max(total, 1.0)
 
     for _ in range(n):
         sy = yy - dy * hstep
@@ -514,7 +553,7 @@ def flow_flood(fieldset, lin: np.ndarray, p: Params, length_scale: float = 1.0):
         s2 = _sample(src, sy, sx)
         d2 = _sample(dist, sy, sx) + hstep
 
-        better = (s2 - tie * d2 > src - tie * dist) & (d2 <= reach)
+        better = s2 - tie * d2 > src - tie * dist
         src = np.where(better, s2, src).astype(np.float32)
         dist = np.where(better, d2, dist).astype(np.float32)
         col = np.where(better[..., None], c2, col).astype(np.float32)
@@ -553,7 +592,8 @@ def render(rgb_srgb: np.ndarray, p: Params, fieldset=None):
         st, q, dist = flow_flood(sfs, out, p)
         # 輪郭を掴めた画素は **完全不透明** で上書きする（下の色は残さない）。
         # 掴めなかった画素だけ元のまま。減衰も距離ブレンドも掛けない。
-        covered = (q >= p.stretch_gate) & (dist > 0.0)
+        tie = (TIE_BASE + p.stretch_decay * (1.0 - p.stretch_gate)) / max(p.flow_length, 1.0)
+        covered = ((q - tie * dist) >= p.stretch_gate - TIE_BASE * 0.5) & (dist > 0.0)
         if p.stretch >= 0.999:
             out = np.where(covered[..., None], st, out)
         else:
@@ -667,7 +707,6 @@ def render_supersampled(rgb_srgb: np.ndarray, p: Params, ss: int = 2):
                 base_sigma=p.base_sigma * ss, step_px=p.step_px * ss,
                 line_grain=p.line_grain * ss, streamer_grain=p.streamer_grain * ss,
                 stretch_scale=p.stretch_scale * ss, stretch_pick=p.stretch_pick * ss,
-                stretch_jitter_scale=p.stretch_jitter_scale * ss,
                 steps=p.steps)
     out, _ = render(big, q)
     return out.reshape(h, ss, w, ss, 3).mean(axis=(1, 3)).astype(np.float32)

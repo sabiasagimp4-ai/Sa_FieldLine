@@ -49,6 +49,10 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     const int MaxStretchPasses = 512;
 
     const float BaseSigma = 1.1f;
+    /// <summary>同点の時に近い輪郭を採るための最小の距離ペナルティ。</summary>
+    const double TieBase = 0.03d;
+    /// <summary>優先度に使う「輪郭の強さ」を均す幅（輪郭の帯の幅に対する倍率）。</summary>
+    const double PrioSmooth = 1.0d;
     const float Align = 0.65f;
     const float AmpGamma = 0.85f;
     const float Falloff = 0.9f;
@@ -97,6 +101,9 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
     readonly Node[] vReduce = new Node[ReduceLevels];
     readonly Node vNorm = null!;
     readonly Node dirBorder = null!, dirBlur = null!, dirCrop = null!;
+    readonly Node confPrioBorder = null!, confPrioBlur = null!, confPrioCrop = null!;
+    readonly Node[] cmeanReduce = new Node[ReduceLevels];
+    readonly Node cmeanNorm = null!;
     readonly Node prioBorder = null!, prioBlur = null!, prioCrop = null!;
 
     readonly List<StretchStepPass> stretchSteps = [];
@@ -244,7 +251,25 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         // --- P7: 引き伸ばしの伝播（等倍）
         // 1/2 で伝播させると 1 パスが 1/4 のコストで済むが、帯の境界も運ぶ色も眠くなる。
         // 3 倍に拡大して比べると差がはっきり出たので等倍にしてある。
+        // 優先度は「この輪郭の強さ」を要る。画素ごとの強さのまま競わせると
+        // 隣の画素が別の輪郭に当たって櫛状の縞が戻るので、輪郭の帯の幅でぼかしたものと、
+        // 画面全体の平均（1x1 まで潰したもの）を一緒に渡す。
+        confPrioBorder = NewBorder();
+        confPrioBorder.Effect.SetInput(0, confOut, true);
+        confPrioBlur = NewBlur();
+        confPrioBlur.Effect.SetInput(0, confPrioBorder.Output, true);
+        confPrioCrop = NewCrop();
+        confPrioCrop.Effect.SetInput(0, confPrioBlur.Output, true);
+        for (var i = 0; i < ReduceLevels; i++)
+        {
+            cmeanReduce[i] = NewScale(0.5f);
+            cmeanReduce[i].Effect.SetInput(0, i == 0 ? confQ.Output : cmeanReduce[i - 1].Output, true);
+        }
+        cmeanNorm = NewBorder();
+
         priority.SetInput(0, confOut, true);
+        priority.SetInput(1, confPrioCrop.Output, true);
+        priority.SetInput(2, cmeanNorm.Output, true);
         prioBorder = NewBorder();
         prioBorder.Effect.SetInput(0, prioOut, true);
         prioBlur = NewBlur();
@@ -384,8 +409,9 @@ internal sealed class FieldLineProcessor : IVideoEffectProcessor
         vStats.C5 = Vector4.Zero;
         priority.C5 = Vector4.Zero;
         // 掴めた画素は完全不透明で塗り替える。score には tie*距離 が入っているので、
-        // 閾値をその半分ぶん下げて補正する。
-        composite.C0 = new Vector4((float)(gate - 0.015d), (float)stretch, 0f, 0f);
+        // 閾値を最小ペナルティの半分ぶん下げて補正する。
+        //「近さを優先」のぶんは引かない（引くと上げるほど塗る範囲が広がってしまう）。
+        composite.C0 = new Vector4((float)(gate - TieBase * 0.5d), (float)stretch, 0f, 0f);
         composite.C5 = Vector4.Zero;
 
         confidence.C0 = new Vector4((float)threshold, 0f, 0f, 0f);

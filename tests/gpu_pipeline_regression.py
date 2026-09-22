@@ -62,6 +62,11 @@ CASES = [
                   smoothness=0.40, edge_threshold=0.25, detail_scale=0.30,
                   stretch=1.0, stretch_gate=0.35, stretch_pick=3.0), 0.12),
     # 力線は局所コントラスト正規化を解析式に置き換えているので、許容を広めに取る
+    # 「近さを優先」と「筆の毛」を使う側。届く距離が優先度で決まる経路を通す。
+    ("brush", dict(strength=0.0, radius=150, flow_length=200, curvature=1.0,
+                   smoothness=0.40, edge_threshold=0.25, detail_scale=0.30,
+                   stretch=1.0, stretch_gate=0.35, stretch_pick=3.0,
+                   stretch_decay=0.9, stretch_jitter=0.6), 0.12),
     ("lines", dict(strength=0.25, radius=160, flow_length=110, curvature=1.2,
                    smoothness=0.45, edge_threshold=0.10, detail_scale=0.45,
                    line_draw=0.6, line_grain=1.5, line_density=1.1, steps=48), 0.16),
@@ -78,7 +83,7 @@ def main() -> int:
         ref_kw = dict(kw)
         ref_kw.pop("steps", None)
         if "stretch" in ref_kw:
-            ref_kw.update(stretch_mode="edge", stretch_radial=True, stretch_decay=0.0, step_px=0.9)
+            ref_kw.update(stretch_mode="edge", stretch_radial=True, step_px=0.9)
         else:
             ref_kw.update(step_px=1.25)
         ref, _ = fl.render(img, fl.Params(**ref_kw))
@@ -90,14 +95,20 @@ def main() -> int:
             failures.append(name)
 
     # 引き伸ばしは伝播なので、隣接画素が大きく食い違ってはいけない（櫛状の破線の検出）。
+    #
+    # 元画像そのものが縞（細い縞のブロック）を持っているので、出力の縞をそのまま
+    # 数えると「元の構造が残っているほど悪い」という逆の指標になってしまう。
+    # **元が平坦な所に新しく出た縞** だけを数える。
+    # 歩幅を粗くすると 0.05 以上に跳ね上がるので、0.02 で十分に分離できる。
     kw = dict(strength=0.0, radius=150, flow_length=140, curvature=1.0, smoothness=0.40,
               edge_threshold=0.25, detail_scale=0.30, stretch=1.0, stretch_gate=0.35,
               stretch_pick=3.0)
     out, _ = gs.render(img, gs.GpuParams(**kw))
-    lum = out.mean(-1)
-    # 横方向の 1 画素差の符号が毎画素入れ替わる割合＝縞の密度
-    d = np.diff(lum, axis=1)
-    flips = float(np.mean((d[:, :-1] * d[:, 1:] < 0) & (np.abs(d[:, :-1]) > 0.02)))
+    d = np.diff(out.mean(-1), axis=1)
+    ds = np.diff(img.mean(-1), axis=1)
+    smooth = (np.abs(ds[:, :-1]) <= 0.02) & (np.abs(ds[:, 1:]) <= 0.02)
+    bad = (d[:, :-1] * d[:, 1:] < 0) & (np.abs(d[:, :-1]) > 0.02) & smooth
+    flips = float(bad.sum() / max(smooth.sum(), 1))
     print(f"comb       flipRatio={flips:.4f} (<= 0.02) {'ok' if flips <= 0.02 else 'FAILED'}")
     if flips > 0.02:
         failures.append("comb")

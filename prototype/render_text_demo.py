@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fieldline as fl  # noqa: E402
+import gpu_sim as gs  # noqa: E402
 
 JP_FONT = "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf"
 
@@ -49,6 +50,29 @@ def main(outdir):
     ]
     for name, kw in cases:
         out, _ = fl.render(img, fl.Params(**kw))
+        Image.fromarray((np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8)).save(f"{outdir}/{name}.png")
+        print("saved", name, flush=True)
+
+    # 引き伸ばしは **プラグインと同じ演算だけ** のパイプラインで描く。
+    #
+    # 「近さを優先」を 0 にすると、どの流線も「流線の長さ」いっぱいまで届くので、
+    # 塗った範囲が被写体を中心にした円盤になり、放射の束＝集中線になる。
+    # 上げると弱い輪郭ほど手前で止まり、文字の形に沿った厚みとして残る。
+    # 「筆の毛」で流線ごとの長さをばらつかせると、縁が円弧ではなくなる。
+    pulls = [
+        ("25_text_pull", dict(strength=0.0, radius=150, flow_length=170, edge_threshold=0.25,
+                              detail_scale=0.30, smoothness=0.40, step_px=0.9,
+                              stretch=1.0, stretch_gate=0.60, stretch_pick=4.0,
+                              stretch_decay=0.75, stretch_jitter=0.55, stretch_swirl=0.2)),
+        ("26_text_pull_lines", dict(strength=0.06, radius=150, flow_length=170, swirl=1.0,
+                                    curvature=1.0, edge_threshold=0.25, detail_scale=0.30,
+                                    smoothness=0.40, step_px=0.9, line_draw=0.55, line_grain=1.6,
+                                    line_density=1.1,
+                                    stretch=1.0, stretch_gate=0.60, stretch_pick=4.0,
+                                    stretch_decay=0.75, stretch_jitter=0.55, stretch_swirl=0.2)),
+    ]
+    for name, kw in pulls:
+        out, _ = gs.render(img, gs.GpuParams(**kw))
         Image.fromarray((np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8)).save(f"{outdir}/{name}.png")
         print("saved", name, flush=True)
 
