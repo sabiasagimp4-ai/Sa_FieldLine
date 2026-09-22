@@ -41,19 +41,20 @@ def main() -> int:
 
     for display, order, typ, name in props:
         order_i = int(order)
+        bad = []
         if order_i in orders:
-            failures.append(f"Order {order_i} が重複: {orders[order_i]} と {name}")
+            bad.append(f"Order {order_i} が {orders[order_i]} と重複")
         orders[order_i] = name
 
-        if not re.search(r"item\." + re.escape(name) + r"\b", processor):
-            if name not in NOT_WIRED_OK:
-                failures.append(f"{name}（{display}）を FieldLineProcessor が読んでいない")
+        if name not in NOT_WIRED_OK and not re.search(r"item\." + re.escape(name) + r"\b", processor):
+            bad.append("FieldLineProcessor が読んでいない")
 
         if typ == "Animation" and name not in listed:
-            failures.append(f"{name}（{display}）が GetAnimatables() に無い＝キーフレームが効かない")
+            bad.append("GetAnimatables() に無い＝キーフレームが効かない")
 
-        print(f"{name:20s} order={order_i:<3d} {'Animation' if typ == 'Animation' else typ}  "
-              f"{'ok' if not failures or failures[-1].split('（')[0] != name else 'FAILED'}")
+        failures += [f"{name}（{display}）: {b}" for b in bad]
+        print(f"{name:20s} order={order_i:<3d} {typ:10s} "
+              f"{'ok' if not bad else 'FAILED ' + ', '.join(bad)}")
 
     gaps = sorted(set(range(len(orders))) - set(orders))
     if gaps:

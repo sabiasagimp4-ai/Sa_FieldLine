@@ -440,6 +440,11 @@ def stretch(colour, F, p: GpuParams):
     if p.stretch_jitter > 1e-4:
         # 筆の毛。届く距離は優先度で決まるので、優先度をばらつかせると毛先が不揃いになる。
         # 粒は flow_length に比例させる（長い流線ほど太い毛）。
+        #
+        # ノイズの座標だけは GPU と一致しない。こちらは画像の画素座標、HLSL は
+        # **シーン座標**（D2DGetScenePosition）を使う。素材が動いた時に模様が
+        # 泳がないようにするためで、力線のノイズと同じ扱い。位相がずれるだけで
+        # 統計は同じなので、ここを画素座標に揃えてはいけない。
         cell = max(p.flow_length * 0.08, 4.0) / S
         nz = _value_noise(xx / cell, yy / cell)
         prio = (prio * (1.0 - p.stretch_jitter * nz)).astype(np.float32)

@@ -504,6 +504,7 @@ def flow_flood(fieldset, lin: np.ndarray, p: Params, length_scale: float = 1.0):
     if p.stretch_jitter > 1e-4:
         # 筆の毛。届く距離は優先度で決まるので、優先度をばらつかせると毛先が不揃いになる。
         # 粒は flow_length に比例させる（長い流線ほど太い毛）。
+        # ノイズの座標だけは GPU と一致しない（あちらはシーン座標）。位相がずれるだけ。
         cell = max(p.flow_length * 0.08, 4.0)
         nz = _value_noise(xx / cell, yy / cell)
         prio = prio * (1.0 - p.stretch_jitter * nz)
