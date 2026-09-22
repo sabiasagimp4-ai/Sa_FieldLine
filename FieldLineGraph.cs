@@ -34,11 +34,9 @@ internal static class FieldLineGraph
     {
         try
         {
-            // 標準プロパティ D2D1_PROPERTY_PRECISION は列挙型なので、列挙のまま渡す。
-            // int で渡すと型が合わず失敗する。
-            // 古い Vortice を積んだ YMM4 では添字が int なので、
-            // ここがコンパイルエラーになったら (uint) を (int) に変える。
-            effect.SetValue((uint)Property.Precision, BufferPrecision.PerChannel16Float);
+            // Vortice の SetValue はプロパティ番号と値を int として受ける。
+            // D2D1 の precision property は負のプロパティ番号を持つため、uint にしない。
+            effect.SetValue((int)Property.Precision, (int)BufferPrecision.PerChannel16Float);
         }
         catch
         {
