@@ -34,9 +34,21 @@ internal static class FieldLineGraph
     {
         try
         {
-            // Vortice の SetValue はプロパティ番号と値を int として受ける。
-            // D2D1 の precision property は負のプロパティ番号を持つため、uint にしない。
-            effect.SetValue(unchecked((int)Property.Precision), (int)BufferPrecision.PerChannel16Float);
+            // YMM4 が同梱するVorticeは、検査用NuGetとSetValueのシグネチャが異なる。
+            // dynamic経由で両方のAPI形を試し、どちらでもコンパイルできるようにする。
+            dynamic properties = effect;
+            try
+            {
+                properties.SetValue(
+                    unchecked((uint)Property.Precision),
+                    BufferPrecision.PerChannel16Float);
+            }
+            catch
+            {
+                properties.SetValue(
+                    unchecked((int)Property.Precision),
+                    (int)BufferPrecision.PerChannel16Float);
+            }
         }
         catch
         {
