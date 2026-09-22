@@ -1,0 +1,75 @@
+name: Check
+
+# Windows も YMM4 も要らない検査をまとめて回します。
+#   1. HLSL の構文（glslang）
+#   2. C# の型検査（YMM4 はスタブ、Vortice は nuget の本物）
+#   3. プロトタイプとの一致（GPU で作れる形に落とした実装が参照実装とずれていないか）
+#   4. サンプル生成スクリプトのプリセットが今のパラメータ定義で通るか
+#   5. 端の条件（輪郭なし・極小・各パラメータの上下限）で NaN が出ないか
+#   6. 入力の本数が csproj / シェーダ / C# で一致しているか
+#   7. UI に出したパラメータが Processor まで繋がっているか
+#   8. 同じ定数が prototype / HLSL / C# で一致しているか
+#   9. シェーダが読む定数スロットを C# が入れているか
+#  10. プロトタイプの既定値が UI の既定値と揃っているか
+# 実ビルドは release.yml（windows-latest + fxc + 本物の YMM4）で行います。
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# 同じ ref に続けて push した時、古い実行は止める。
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install glslang
+        run: sudo apt-get update && sudo apt-get install -y glslang-tools
+
+      - name: Shader input counts
+        run: python tests/shader_inputs_check.py
+
+      - name: Parameters wired
+        run: python tests/params_wired_check.py
+
+      - name: Constants parity
+        run: python tests/constants_parity_check.py
+
+      - name: Shader constant slots
+        run: python tests/shader_constants_check.py
+
+      - name: HLSL syntax
+        run: sh tests/hlsl_syntax_check.sh
+
+      - name: C# compile check
+        run: sh tests/csharp_compile_check.sh Release
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade -r prototype/requirements.txt
+
+      - name: Defaults parity
+        run: python tests/defaults_parity_check.py
+
+      - name: Preset smoke
+        run: python tests/preset_smoke.py
+
+      - name: Edge cases
+        run: python tests/edge_cases.py
+
+      - name: Pipeline regression
+        run: python tests/gpu_pipeline_regression.py

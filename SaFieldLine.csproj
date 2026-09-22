@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>SaFieldLine</AssemblyName>
+    <RootNamespace>SaFieldLine</RootNamespace>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
+    <FxcPath Condition="'$(FxcPath)' == ''">$(WindowsSdkBinPath)x64\fxc.exe</FxcPath>
+    <D2DIncludePath Condition="'$(D2DIncludePath)' == ''">$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\um</D2DIncludePath>
+  </PropertyGroup>
+
+  <!-- tests/ は Windows と YMM4 の無い環境で型検査するためのスタブ。製品には入れない。 -->
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <None Remove="tests/**" />
+    <EmbeddedResource Remove="tests/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="YukkuriMovieMaker.Controls"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Controls.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="YukkuriMovieMaker.Plugin"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Plugin.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SharpGen.Runtime"><HintPath>$(YMM4DirPath)SharpGen.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SharpGen.Runtime.COM"><HintPath>$(YMM4DirPath)SharpGen.Runtime.COM.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.Direct2D1"><HintPath>$(YMM4DirPath)Vortice.Direct2D1.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.DirectX"><HintPath>$(YMM4DirPath)Vortice.DirectX.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.Mathematics"><HintPath>$(YMM4DirPath)Vortice.Mathematics.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!-- パスごとのピクセルシェーダ。Inputs は D2D_INPUT_COUNT。 -->
+  <ItemGroup>
+    <FieldLineShader Include="Shaders\Luma.hlsl"><Inputs>1</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Edge.hlsl"><Inputs>5</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Stats.hlsl"><Inputs>1</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Confidence.hlsl"><Inputs>2</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Spread.hlsl"><Inputs>6</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\FieldDir.hlsl"><Inputs>2</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\FieldA.hlsl"><Inputs>2</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\FieldB.hlsl"><Inputs>4</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Radial.hlsl"><Inputs>1</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Advect.hlsl"><Inputs>3</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Priority.hlsl"><Inputs>3</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\StretchInit.hlsl"><Inputs>4</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\StretchStep.hlsl"><Inputs>2</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Composite.hlsl"><Inputs>2</Inputs></FieldLineShader>
+    <FieldLineShader Include="Shaders\Post.hlsl"><Inputs>4</Inputs></FieldLineShader>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="@(FieldLineShader->'$(IntermediateOutputPath)%(Filename).cso')">
+      <LogicalName>SaFieldLine.%(Filename).cso</LogicalName>
+    </EmbeddedResource>
+    <None Include="Shaders\FieldLineCommon.hlsli" />
+  </ItemGroup>
+
+  <Target Name="CompileShaders" BeforeTargets="PrepareResources"
+          Inputs="@(FieldLineShader);Shaders\FieldLineCommon.hlsli"
+          Outputs="@(FieldLineShader->'$(IntermediateOutputPath)%(Filename).cso')">
+    <Error Condition="!Exists('$(FxcPath)')" Text="fxc.exe was not found. Set -p:FxcPath to the Windows SDK x64 fxc.exe path." />
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="&quot;$(FxcPath)&quot; /nologo /I &quot;$(D2DIncludePath)&quot; /I &quot;$(MSBuildProjectDirectory)\Shaders&quot; /D D2D_INPUT_COUNT=%(FieldLineShader.Inputs) /T ps_4_0 /E main /Fo &quot;$(IntermediateOutputPath)%(FieldLineShader.Filename).cso&quot; &quot;$(MSBuildProjectDirectory)\%(FieldLineShader.Identity)&quot;" />
+  </Target>
+</Project>

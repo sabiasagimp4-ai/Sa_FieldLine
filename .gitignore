@@ -1,0 +1,5 @@
+bin/
+obj/
+*.user
+__pycache__/
+prototype/out/
